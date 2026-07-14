@@ -744,7 +744,7 @@ async def process_reel_scene_breakdown(reel):
                 "character_name": "Narrator",
                 "emotion_tag": "calm",
                 "voice": "kokoro_af_bella", # Use a soft Kokoro voice
-                "speed": 0.85, # Slower for sleep stories
+                "speed": 1.0, # User prefers 1.0x default
                 "status": "pending"
             })
             
