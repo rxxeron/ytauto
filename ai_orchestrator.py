@@ -1214,32 +1214,63 @@ async def main_loop():
                 for job in vid_res.data:
                     try:
                         print(f"\n[+] Processing TTS Video Job: {job['id']}")
-                        fal_key = os.getenv("FAL_KEY")
-                        if not fal_key:
-                            raise Exception("FAL_KEY is missing from environment variables.")
+                        
+                        runpod_key = os.getenv("RUNPOD_API_KEY")
+                        runpod_endpoint = os.getenv("RUNPOD_LTX_ENDPOINT_ID")
+                        
+                        if not runpod_key or not runpod_endpoint:
+                            raise Exception("RUNPOD_API_KEY or RUNPOD_LTX_ENDPOINT_ID is missing from environment variables.")
                             
                         import requests
-                        response = requests.post(
-                            "https://fal.run/fal-ai/ltx-video",
-                            headers={
-                                "Authorization": f"Key {fal_key}",
-                                "Content-Type": "application/json"
-                            },
-                            json={
+                        import time
+                        
+                        url = f"https://api.runpod.ai/v2/{runpod_endpoint}/run"
+                        headers = {
+                            "Authorization": f"Bearer {runpod_key}",
+                            "Content-Type": "application/json"
+                        }
+                        
+                        payload = {
+                            "input": {
                                 "image_url": job["image_url"],
                                 "prompt": job.get("image_prompt", "Cinematic motion, high quality")
                             }
-                        )
+                        }
                         
-                        if response.status_code == 200:
-                            video_url = response.json().get("video", {}).get("url")
-                            if video_url:
-                                supabase.table("tts_jobs").update({"status": "video_completed", "video_url": video_url}).eq("id", job["id"]).execute()
-                                print(f"  -> Video Job Completed! URL: {video_url}")
+                        r = requests.post(url, headers=headers, json=payload)
+                        if r.status_code == 200:
+                            data = r.json()
+                            job_id = data.get('id')
+                            status = data.get('status')
+                            
+                            print(f"  -> RunPod LTX Video Job started: {job_id}")
+                            
+                            while status in ['IN_QUEUE', 'IN_PROGRESS']:
+                                await asyncio.sleep(5)
+                                poll_url = f"https://api.runpod.ai/v2/{runpod_endpoint}/status/{job_id}"
+                                r_poll = requests.get(poll_url, headers=headers)
+                                if r_poll.status_code == 200:
+                                    data = r_poll.json()
+                                    status = data.get('status')
+                                    print(f"  -> RunPod LTX Video Job {job_id} is {status}...")
+                                else:
+                                    print(f"  -> Polling error: {r_poll.text}")
+                                    break
+                                    
+                            if status == 'COMPLETED':
+                                output = data.get('output', {})
+                                # LTX-Video runpod worker usually returns the video URL in 'video_url' or 'url' or 'video'
+                                video_url = output.get('video_url') or output.get('url') or (output.get('video') if isinstance(output.get('video'), str) else None)
+                                
+                                if video_url:
+                                    supabase.table("tts_jobs").update({"status": "video_completed", "video_url": video_url}).eq("id", job["id"]).execute()
+                                    print(f"  -> Video Job Completed! URL: {video_url}")
+                                else:
+                                    raise Exception(f"RunPod worker returned success but no video URL found in output: {output}")
                             else:
-                                raise Exception("Fal.ai returned success but no video URL.")
+                                raise Exception(f"RunPod LTX Video generation failed: {data}")
                         else:
-                            raise Exception(f"Fal.ai Error: {response.text}")
+                            raise Exception(f"RunPod Error: {r.text}")
                             
                     except Exception as e:
                         print(f"  -> Video Job Error: {e}")
