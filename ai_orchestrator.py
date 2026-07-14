@@ -911,13 +911,13 @@ async def generate_scene_audio(scene):
                     import base64
                     audio_bytes = base64.b64decode(audio_base64)
                     
-                    os.makedirs("frontend/public/assets/audio", exist_ok=True)
-                    file_path = f"frontend/public/assets/audio/scene_{scene_id}.mp3"
-                    with open(file_path, "wb") as f:
-                        f.write(audio_bytes)
+                    storage_path = f"audio/scene_{scene_id}.mp3"
+                    supabase.storage.from_("media").upload(storage_path, audio_bytes, {"content-type": "audio/mpeg", "upsert": "true"})
+                    public_url = supabase.storage.from_("media").get_public_url(storage_path)
                         
-                    public_url = f"/assets/audio/scene_{scene_id}.mp3"
-                    supabase.table("episode_scenes").update({"status": "audio_ready", "audio_url": public_url}).eq("id", scene_id).execute()
+                    import time
+                    public_url = f"{public_url}?t={int(time.time())}"
+                    supabase.table("episode_scenes").update({"status": "audio_ready", "audio_url": public_url, "error_message": None}).eq("id", scene_id).execute()
                     print(f"[+] Audio generated for Scene {scene.get('scene_number', '?')}")
                     return
                     

@@ -668,14 +668,13 @@ async def regenerate_reel_scene_chunk(scene):
     audio_bytes = node.get('audio_bytes')
     
     if audio_bytes:
-        os.makedirs("local_cache/assets/audio", exist_ok=True)
-        chunk_path = f"local_cache/assets/audio/chunk_{scene['id']}.mp3"
-        with open(chunk_path, "wb") as f:
-            f.write(audio_bytes)
+        storage_path = f"audio/chunk_{scene['id']}.mp3"
+        supabase.storage.from_("media").upload(storage_path, audio_bytes, {"content-type": "audio/mpeg", "upsert": "true"})
+        public_url = supabase.storage.from_("media").get_public_url(storage_path)
         
         import time
-        public_url = f"/assets/audio/chunk_{scene['id']}.mp3?t={int(time.time())}"
-        supabase.table("reel_scenes").update({"audio_url": public_url, "status": "audio_ready"}).eq("id", scene['id']).execute()
+        public_url = f"{public_url}?t={int(time.time())}"
+        supabase.table("reel_scenes").update({"audio_url": public_url, "status": "audio_ready", "error_message": None}).eq("id", scene['id']).execute()
         
         reel_id = scene.get('reels', {}).get('id') or scene.get('reel_id')
         if reel_id:
