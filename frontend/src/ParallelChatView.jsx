@@ -195,6 +195,8 @@ export default function ParallelChatView({ episodeId, onBack }) {
       content: ''
     }).eq('id', aiMessage.id);
     fetchChatHistory();
+  };
+
   const handleFinalize = async (aiMessage, append = false) => {
     let actionText = append ? 'append this to the current finalized' : 'finalize the';
     if (confirm(`Are you sure you want to ${actionText} script with ${aiMessage.model}'s draft?`)) {
