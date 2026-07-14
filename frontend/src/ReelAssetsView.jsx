@@ -719,6 +719,32 @@ export default function ReelAssetsView({ reelId, onBack }) {
                             <option value="kokoro_hm_psi">hm_psi (Male, C)</option>
                         </optgroup>
                         </select>
+                        
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '12px' }}>Speed:</span>
+                        <select 
+                          value={scene.speed || 1.0}
+                          onChange={async (e) => {
+                            await supabase.from('reel_scenes').update({ speed: parseFloat(e.target.value) }).eq('id', scene.id);
+                            fetchData();
+                          }}
+                          className="input-field"
+                          style={{ 
+                            background: '#1e1e2d', 
+                            border: '1px solid var(--border-light)', 
+                            color: 'white',
+                            padding: '4px 8px',
+                            fontSize: '12px',
+                            cursor: 'pointer',
+                            maxWidth: '100px'
+                          }}
+                        >
+                          <option value={0.7}>0.7x (Very Slow)</option>
+                          <option value={0.85}>0.85x (Slow/Sleep)</option>
+                          <option value={1.0}>1.0x (Normal)</option>
+                          <option value={1.15}>1.15x (Fast)</option>
+                          <option value={1.3}>1.3x (Very Fast)</option>
+                          <option value={1.5}>1.5x (Speedreader)</option>
+                        </select>
                         <button
                           onClick={() => handleVoicePreview(scene.id, scene.voice || 'kokoro_af_bella')}
                           disabled={previewLoading[scene.id]}
