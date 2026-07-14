@@ -34,9 +34,9 @@ def generate_script_draft(story_title, logline, lore_context, num_scenes=3):
     """
     
     try:
-        # Use gemini-2.5-flash as it's the latest cheap and fast model
+        # Use gemini-3.5-flash as it's the latest cheap and fast model
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash',
             contents=prompt,
         )
         return response.text
@@ -60,7 +60,7 @@ def cross_check_script(script_text):
     
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash',
             contents=prompt,
         )
         return response.text

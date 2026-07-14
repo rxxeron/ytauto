@@ -113,7 +113,7 @@ async def generate_with_gemini_native(messages, system_prompt):
             
             # Google GenAI doesn't accept empty system instructions
             sys_inst = system_prompt if system_prompt and len(system_prompt.strip()) > 0 else None
-            model = genai.GenerativeModel(model_name='gemini-2.5-flash', system_instruction=sys_inst)
+            model = genai.GenerativeModel(model_name='gemini-3.5-flash', system_instruction=sys_inst)
             
             # Run blocking call in thread pool since genai chat is sync
             loop = asyncio.get_running_loop()

@@ -76,7 +76,7 @@ def generate_edl(scenes):
     
     try:
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )
@@ -124,7 +124,7 @@ def generate_episode_edl(scenes):
     
     try:
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )
