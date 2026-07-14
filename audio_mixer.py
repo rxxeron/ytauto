@@ -176,6 +176,16 @@ async def generate_voice(node):
             
     kokoro_voice = voice.replace("kokoro_", "") if voice.startswith("kokoro_") else "af_bella"
     
+    import os
+    scene_id = node.get("scene_id")
+    if scene_id:
+        local_path = f"local_cache/assets/audio/chunk_{scene_id}.mp3"
+        if os.path.exists(local_path):
+            print(f"  -> Found existing audio chunk for {char_name} (Scene: {scene_id}). Skipping RunPod generation!")
+            with open(local_path, "rb") as f:
+                node['audio_bytes'] = f.read()
+            return node
+            
     try:
         print(f"  -> Fetching Kokoro TTS via RunPod for {char_name} (Voice: {kokoro_voice})")
         runpod_key = os.getenv("RUNPOD_API_KEY")
@@ -335,7 +345,7 @@ async def process_master_audio(ep_id):
     print(f"[+] Master Track successfully mixed to {public_url}")
 
 async def process_reel_master_audio(reel_id):
-    print(f"\n[+] Starting AI Audio Mixer for Reel: {reel_id} (Using Free Edge TTS)")
+    print(f"\n[+] Starting AI Audio Mixer for Reel: {reel_id} (Using Kokoro Serverless)")
     
     res = supabase.table("reel_scenes").select("*").eq("reel_id", reel_id).order("scene_number").execute()
     scenes = res.data
@@ -344,7 +354,7 @@ async def process_reel_master_audio(reel_id):
     print(f"  -> Generated EDL with {len(edl)} tracks. Fetching audio in parallel...")
     
     # Fetch voices in parallel using asyncio
-    tasks = [generate_edge_voice(node) for node in edl]
+    tasks = [generate_voice(node) for node in edl]
     edl = await asyncio.gather(*tasks)
         
     print("  -> All audio fetched. Commencing Mixdown...")
@@ -374,8 +384,14 @@ async def process_reel_master_audio(reel_id):
                     with open(chunk_path, "wb") as f:
                         f.write(audio_bytes)
                     
+                    storage_path = f"audio/chunk_{scene_id}.mp3"
+                    supabase.storage.from_("media").upload(storage_path, audio_bytes, {"content-type": "audio/mpeg", "upsert": "true"})
+                    public_url = supabase.storage.from_("media").get_public_url(storage_path)
+                    
+                    import time
+                    public_url = f"{public_url}?t={int(time.time())}"
+                    
                     # Update database so UI can show it instantly
-                    public_url = f"/assets/audio/chunk_{scene_id}.mp3"
                     supabase.table("reel_scenes").update({"audio_url": public_url, "status": "audio_ready"}).eq("id", scene_id).execute()
                     
                     segment = AudioSegment.from_mp3(chunk_path)

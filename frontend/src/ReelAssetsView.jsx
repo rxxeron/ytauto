@@ -388,7 +388,7 @@ export default function ReelAssetsView({ reelId, onBack }) {
         ) : (
           <div style={{ padding: '20px', background: 'rgba(0,0,0,0.2)', borderRadius: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '12px' }}>
             <Loader2 className="spin" size={20} />
-            <p style={{ margin: 0 }}>The AI Orchestrator is mixing the master audio track (Edge TTS)...</p>
+            <p style={{ margin: 0 }}>The AI Orchestrator is mixing the master audio track...</p>
           </div>
         )}
       </div>
