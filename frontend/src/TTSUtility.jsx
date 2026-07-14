@@ -121,7 +121,8 @@ export default function TTSUtility() {
       text_content: text.trim(),
       voice_id: voiceId,
       status: 'pending',
-      user_id: user?.id
+      user_id: user?.id,
+      user_email: user?.email
     }]);
 
     if (error) {
@@ -130,6 +131,14 @@ export default function TTSUtility() {
       setText(''); // clear text after submitting
     }
     setLoading(false);
+  };
+
+  const handleRequestImage = async (jobId) => {
+    await supabase.from('tts_jobs').update({ status: 'image_requested' }).eq('id', jobId);
+  };
+
+  const handleRequestVideo = async (jobId) => {
+    await supabase.from('tts_jobs').update({ status: 'video_requested' }).eq('id', jobId);
   };
 
   return (
@@ -195,14 +204,14 @@ export default function TTSUtility() {
             <div key={job.id} className="glass-panel" style={{ padding: '16px', position: 'relative' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  {new Date(job.created_at).toLocaleString()}
+                  {new Date(job.created_at).toLocaleString()} • {job.user_email || 'Anonymous'}
                 </span>
                 <span style={{ 
-                  background: job.status === 'completed' ? 'rgba(52, 211, 153, 0.1)' : job.status === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(96, 165, 250, 0.1)',
-                  color: job.status === 'completed' ? '#34d399' : job.status === 'error' ? '#ef4444' : '#60a5fa',
+                  background: job.status === 'completed' || job.status === 'video_completed' ? 'rgba(52, 211, 153, 0.1)' : job.status === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(96, 165, 250, 0.1)',
+                  color: job.status === 'completed' || job.status === 'video_completed' ? '#34d399' : job.status === 'error' ? '#ef4444' : '#60a5fa',
                   padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase'
                 }}>
-                  {job.status}
+                  {job.status.replace('_', ' ')}
                 </span>
               </div>
               
@@ -215,17 +224,61 @@ export default function TTSUtility() {
                 {VOICES.find(v => v.id === job.voice_id)?.label || job.voice_id}
               </div>
 
-              {job.status === 'completed' && job.audio_url && (
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              {(job.status === 'completed' || job.status === 'image_requested' || job.status === 'image_completed' || job.status === 'video_requested' || job.status === 'video_completed') && job.audio_url && (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' }}>
                   <audio src={job.audio_url} controls style={{ height: '32px', flex: 1, filter: 'invert(1)', opacity: 0.8 }} />
                   <a href={job.audio_url} download={`TTS_${job.id.substring(0,8)}.mp3`} className="btn-secondary" style={{ padding: '6px', borderRadius: '8px' }} title="Download MP3">
                     <Download size={16} />
                   </a>
                 </div>
               )}
+              
+              {job.status === 'completed' && job.audio_url && (
+                <button onClick={() => handleRequestImage(job.id)} className="btn-primary" style={{ width: '100%', padding: '8px', fontSize: '12px' }}>
+                  Generate AI Image
+                </button>
+              )}
+
+              {job.status === 'image_requested' && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#60a5fa', fontSize: '12px', padding: '12px', background: 'rgba(96, 165, 250, 0.1)', borderRadius: '8px' }}>
+                  <Loader2 className="spin" size={14} /> Generating Image (Together AI)...
+                </div>
+              )}
+
+              {(job.status === 'image_completed' || job.status === 'video_requested' || job.status === 'video_completed') && job.image_url && (
+                <div style={{ marginTop: '12px' }}>
+                  <img src={job.image_url} alt="Generated Visual" style={{ width: '100%', borderRadius: '8px', marginBottom: '8px' }} />
+                  {job.status === 'image_completed' && (
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button onClick={() => handleRequestImage(job.id)} className="btn-secondary" style={{ flex: 1, padding: '8px', fontSize: '12px' }}>
+                        Regenerate Image
+                      </button>
+                      <button onClick={() => handleRequestVideo(job.id)} className="btn-primary" style={{ flex: 2, padding: '8px', fontSize: '12px', background: '#8b5cf6', borderColor: '#8b5cf6', color: 'white' }}>
+                        Approve & Gen Video
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {job.status === 'video_requested' && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#c084fc', fontSize: '12px', padding: '12px', background: 'rgba(192, 132, 252, 0.1)', borderRadius: '8px', marginTop: '8px' }}>
+                  <Loader2 className="spin" size={14} /> Generating Video (RunPod)...
+                </div>
+              )}
+              
+              {job.status === 'video_completed' && job.video_url && (
+                <div style={{ marginTop: '12px' }}>
+                  <video src={job.video_url} controls loop autoPlay muted style={{ width: '100%', borderRadius: '8px' }} />
+                  <a href={job.video_url} download={`Video_${job.id.substring(0,8)}.mp4`} className="btn-secondary" style={{ width: '100%', padding: '8px', fontSize: '12px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                    <Download size={14} /> Download Final Video
+                  </a>
+                </div>
+              )}
+
               {job.status === 'pending' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
-                  <Loader2 className="spin" size={14} /> Generating in background...
+                  <Loader2 className="spin" size={14} /> Generating audio in background...
                 </div>
               )}
             </div>

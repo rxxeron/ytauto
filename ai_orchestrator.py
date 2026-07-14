@@ -1153,6 +1153,97 @@ async def main_loop():
                     except Exception as e:
                         print(f"  -> TTS Job Error: {e}")
                         supabase.table("tts_jobs").update({"status": "error"}).eq("id", job["id"]).execute()
+                        
+            # Poll for TTS Image Requests
+            img_res = supabase.table("tts_jobs").select("*").eq("status", "image_requested").execute()
+            if img_res.data:
+                for job in img_res.data:
+                    try:
+                        print(f"\n[+] Processing TTS Image Job: {job['id']}")
+                        
+                        # 1. Ask Gemini to generate an image prompt based on the TTS text
+                        prompt_res = gemini_client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=f"You are a cinematic prompt engineer. Based on the following voiceover script, write a single concise 1-2 sentence image generation prompt for a highly detailed, cinematic photograph that perfectly captures the mood. Script: {job['text_content']}"
+                        )
+                        image_prompt = prompt_res.text.strip()
+                        print(f"  -> Generated Image Prompt: {image_prompt}")
+                        
+                        # 2. Use Together AI (FLUX) to generate the image
+                        import base64
+                        response = together_client.images.generate(
+                            prompt=image_prompt,
+                            model="black-forest-labs/FLUX.1-schnell",
+                            n=1,
+                            response_format="b64_json"
+                        )
+                        
+                        b64_img = response.data[0].b64_json
+                        image_bytes = base64.b64decode(b64_img)
+                        
+                        # 3. Upload to Supabase Storage
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+                            temp_file.write(image_bytes)
+                            temp_file_path = temp_file.name
+                        
+                        try:
+                            supabase_path = f"images/tts_{job['id']}.png"
+                            with open(temp_file_path, "rb") as f:
+                                supabase.storage.from_("media").upload(
+                                    path=supabase_path,
+                                    file=f,
+                                    file_options={"content-type": "image/png"},
+                                    upsert=True
+                                )
+                            
+                            public_url = supabase.storage.from_("media").get_public_url(supabase_path)
+                            # Save prompt too so we can pass it to video
+                            supabase.table("tts_jobs").update({"status": "image_completed", "image_url": public_url, "image_prompt": image_prompt}).eq("id", job["id"]).execute()
+                            print(f"  -> Image Job Completed! URL: {public_url}")
+                        finally:
+                            os.remove(temp_file_path)
+                            
+                    except Exception as e:
+                        print(f"  -> Image Job Error: {e}")
+                        supabase.table("tts_jobs").update({"status": "error"}).eq("id", job["id"]).execute()
+
+            # Poll for TTS Video Requests
+            vid_res = supabase.table("tts_jobs").select("*").eq("status", "video_requested").execute()
+            if vid_res.data:
+                for job in vid_res.data:
+                    try:
+                        print(f"\n[+] Processing TTS Video Job: {job['id']}")
+                        fal_key = os.getenv("FAL_KEY")
+                        if not fal_key:
+                            raise Exception("FAL_KEY is missing from environment variables.")
+                            
+                        import requests
+                        response = requests.post(
+                            "https://fal.run/fal-ai/ltx-video",
+                            headers={
+                                "Authorization": f"Key {fal_key}",
+                                "Content-Type": "application/json"
+                            },
+                            json={
+                                "image_url": job["image_url"],
+                                "prompt": job.get("image_prompt", "Cinematic motion, high quality")
+                            }
+                        )
+                        
+                        if response.status_code == 200:
+                            video_url = response.json().get("video", {}).get("url")
+                            if video_url:
+                                supabase.table("tts_jobs").update({"status": "video_completed", "video_url": video_url}).eq("id", job["id"]).execute()
+                                print(f"  -> Video Job Completed! URL: {video_url}")
+                            else:
+                                raise Exception("Fal.ai returned success but no video URL.")
+                        else:
+                            raise Exception(f"Fal.ai Error: {response.text}")
+                            
+                    except Exception as e:
+                        print(f"  -> Video Job Error: {e}")
+                        supabase.table("tts_jobs").update({"status": "error"}).eq("id", job["id"]).execute()
                     
         except Exception as e:
             print(f"Error polling database: {e}")
