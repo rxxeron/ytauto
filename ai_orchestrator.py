@@ -708,12 +708,20 @@ async def process_reel_scene_breakdown(reel):
     
     if reel.get("reel_type") == "sleep":
         print("  -> Sleep story detected. Chunking natively without Gemini...")
+        
+        # Clean up the script first to remove [Scene X] and [Narrator]: tags
+        import re
+        clean_script = re.sub(r'\[.*?\]:?\s*', '', script)
+        clean_script = re.sub(r'^[A-Za-z\s]+:\s*', '', clean_script)
+        clean_script = clean_script.replace('"', '')
+        
         chunks = []
         current_chunk = ""
-        for paragraph in script.split('\n'):
+        # Chunk into smaller pieces (max 500 chars) for stable Kokoro TTS generation
+        for paragraph in clean_script.split('\n'):
             if not paragraph.strip():
                 continue
-            if len(current_chunk) + len(paragraph) < 2000:
+            if len(current_chunk) + len(paragraph) < 500:
                 current_chunk += paragraph + "\n"
             else:
                 if current_chunk.strip():
