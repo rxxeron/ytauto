@@ -327,10 +327,10 @@ Search: (Highly descriptive keywords for fetching a real historical photo from W
             content = await generate_with_ai(messages, SYSTEM_PROMPT, requested_model=model_name)
             successful_model = model_name
         except Exception as e:
-            print(f"[-] Gemini failed completely: {e}")
+            print(f"[-] {model_name} failed completely: {e}")
             
         if not content:
-            raise Exception("All keys for Gemini failed.")
+            raise Exception(f"All keys for {model_name} failed.")
 
         supabase.table("reel_chats").update({
             "content": content,
