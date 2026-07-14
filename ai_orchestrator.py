@@ -711,7 +711,9 @@ async def process_reel_scene_breakdown(reel):
         
         # Clean up the script first to remove [Scene X] and [Narrator]: tags
         import re
-        clean_script = re.sub(r'\[.*?\]:?\s*', '', script)
+        # Remove common AI conversational filler at the start
+        clean_script = re.sub(r'(?i)^(here is|sure,?|okay,?|here\'s|certainly|absolutely).*?:\s*\n*', '', script)
+        clean_script = re.sub(r'\[.*?\]:?\s*', '', clean_script)
         clean_script = re.sub(r'^[A-Za-z\s]+:\s*', '', clean_script)
         clean_script = clean_script.replace('"', '')
         

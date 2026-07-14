@@ -185,7 +185,8 @@ async def generate_voice(node):
     scene_id = node.get("scene_id")
     if scene_id:
         local_path = f"local_cache/assets/audio/chunk_{scene_id}.mp3"
-        if os.path.exists(local_path):
+        # Only use local cache if the file actually has audio data (> 100 bytes)
+        if os.path.exists(local_path) and os.path.getsize(local_path) > 100:
             print(f"  -> Found existing audio chunk for {char_name} (Scene: {scene_id}). Skipping RunPod generation!")
             with open(local_path, "rb") as f:
                 node['audio_bytes'] = f.read()
@@ -592,46 +593,54 @@ async def regenerate_reel_scene_chunk(scene):
 
 async def rebuild_reel_master_voice(reel_id):
     print(f"  -> Rebuilding master voice track for reel {reel_id}...")
-    res = supabase.table("reel_scenes").select("*").eq("reel_id", reel_id).order("scene_number").execute()
+    res = supabase.table("reel_scenes").select("*, reels(reel_type)").eq("reel_id", reel_id).order("scene_number").execute()
     scenes = res.data or []
-    
-    edl, _ = generate_edl(scenes)
     
     master_track = AudioSegment.silent(duration=0)
     current_time_ms = 0
     timing_map = []
     
-    for i, node in enumerate(edl):
-        ntype = node.get("type")
-        if ntype == "silence":
-            dur_ms = int(node.get("duration_seconds", 1.0) * 1000)
-            master_track += AudioSegment.silent(duration=dur_ms)
-            current_time_ms += dur_ms
+    # Determine default gap based on reel type
+    is_sleep_story = False
+    if scenes and scenes[0].get('reels') and scenes[0]['reels'].get('reel_type') == 'sleep':
+        is_sleep_story = True
+    gap_duration_ms = 1000 if is_sleep_story else 300
+    
+    for i, scene in enumerate(scenes):
+        scene_id = scene.get('id')
+        if scene_id:
+            chunk_path = f"local_cache/assets/audio/chunk_{scene_id}.mp3"
+            # Strip out query params if any
+            if "?" in chunk_path: chunk_path = chunk_path.split("?")[0]
             
-        elif ntype == "voice":
-            scene_id = node.get('scene_id')
-            if scene_id:
-                chunk_path = f"local_cache/assets/audio/chunk_{scene_id}.mp3"
-                # Strip out query params if any
-                if "?" in chunk_path: chunk_path = chunk_path.split("?")[0]
-                
-                if os.path.exists(chunk_path):
+            if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
+                try:
                     segment = AudioSegment.from_mp3(chunk_path)
-                    master_track += segment
-                    dur_ms = len(segment)
-                    
-                    timing_map.append({
-                        "scene_id": scene_id,
-                        "scene_number": node.get('scene_number'),
-                        "dialogue": node.get('dialogue'),
-                        "start_ms": current_time_ms,
-                        "end_ms": current_time_ms + dur_ms
-                    })
-                    current_time_ms += dur_ms
+                except Exception as e:
+                    print(f"Failed to read {chunk_path}: {e}")
+                    continue
+                
+                master_track += segment
+                dur_ms = len(segment)
+                
+                timing_map.append({
+                    "scene_id": scene_id,
+                    "scene_number": scene.get('scene_number'),
+                    "dialogue": scene.get('dialogue'),
+                    "start_ms": current_time_ms,
+                    "end_ms": current_time_ms + dur_ms
+                })
+                current_time_ms += dur_ms
+                
+                # Add gap after the scene (except for the very last scene)
+                if i < len(scenes) - 1:
+                    master_track += AudioSegment.silent(duration=gap_duration_ms)
+                    current_time_ms += gap_duration_ms
 
     os.makedirs("local_cache/assets/audio", exist_ok=True)
     voice_path = f"local_cache/assets/audio/reel_{reel_id}_voice.mp3"
     master_track.export(voice_path, format="mp3")
+    
     
     timing_path = f"local_cache/assets/audio/reel_{reel_id}_timing.json"
     with open(timing_path, "w") as f:
