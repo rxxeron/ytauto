@@ -853,44 +853,82 @@ async def generate_scene_audio(scene):
         supabase.table("episode_scenes").update({"status": "audio_ready"}).eq("id", scene_id).execute()
         return
 
-    print(f"\n[+] Generating Audio for Scene {scene['scene_number']} (ID: {scene_id})")
-    char_name = scene.get("character_name", "").lower()
-    voice_id = VOICE_MAP.get("default")
-    for key in VOICE_MAP:
-        if key in char_name:
-            voice_id = VOICE_MAP[key]
-            break
-            
-    print(f"  -> Generating audio for {char_name}: '{dialogue[:30]}...'")
+    print(f"\n[+] Generating Audio for Scene {scene.get('scene_number', '?')} (ID: {scene_id})")
     
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    voice = scene.get("voice")
+    if not voice:
+        char_name = scene.get("character_name", "").lower()
+        voice = "af_bella"
+    voice = voice.replace("kokoro_", "")
+            
+    print(f"  -> Generating Kokoro audio via RunPod for {voice}: '{dialogue[:30]}...'")
+    
+    runpod_key = os.getenv("RUNPOD_API_KEY")
+    runpod_endpoint = os.getenv("RUNPOD_KOKORO_ENDPOINT_ID")
+    
+    if not runpod_endpoint or not runpod_key:
+        print("[-] Missing RUNPOD_KOKORO_ENDPOINT_ID or RUNPOD_API_KEY in .env")
+        supabase.table("episode_scenes").update({"status": "error"}).eq("id", scene_id).execute()
+        return
+
+    url = f"https://api.runpod.ai/v2/{runpod_endpoint}/runsync"
     headers = {
-        "Accept": "audio/mpeg",
-        "Content-Type": "application/json",
-        "xi-api-key": ELEVENLABS_API_KEY
+        "Authorization": f"Bearer {runpod_key}",
+        "Content-Type": "application/json"
     }
-    data = {
-        "text": dialogue,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {"stability": 0.5, "similarity_boost": 0.5}
+    payload = {
+        "input": {
+            "text": dialogue,
+            "voice": voice,
+            "speed": 1.0
+        }
     }
+    
+    import requests
+    import asyncio
     try:
-        r = requests.post(url, json=data, headers=headers)
+        r = requests.post(url, json=payload, headers=headers)
         if r.status_code == 200:
-            os.makedirs("frontend/public/assets/audio", exist_ok=True)
-            file_path = f"frontend/public/assets/audio/scene_{scene_id}.mp3"
-            with open(file_path, "wb") as f:
-                f.write(r.content)
-                
-            public_url = f"/assets/audio/scene_{scene_id}.mp3"
-            supabase.table("episode_scenes").update({"status": "audio_ready", "audio_url": public_url}).eq("id", scene_id).execute()
-            print(f"[+] Audio generated for Scene {scene['scene_number']}")
+            data = r.json()
+            job_id = data.get('id')
+            status = data.get('status')
+            
+            while status in ['IN_QUEUE', 'IN_PROGRESS']:
+                print(f"  -> RunPod Kokoro Job {job_id} is {status}, waiting...")
+                await asyncio.sleep(2)
+                poll_url = f"https://api.runpod.ai/v2/{runpod_endpoint}/status/{job_id}"
+                r_poll = requests.get(poll_url, headers=headers)
+                if r_poll.status_code == 200:
+                    data = r_poll.json()
+                    status = data.get('status')
+                else:
+                    break
+                    
+            if status == 'COMPLETED' and 'output' in data:
+                audio_base64 = data['output'].get('audio_base64') or data['output'].get('audio')
+                if audio_base64:
+                    import base64
+                    audio_bytes = base64.b64decode(audio_base64)
+                    
+                    os.makedirs("frontend/public/assets/audio", exist_ok=True)
+                    file_path = f"frontend/public/assets/audio/scene_{scene_id}.mp3"
+                    with open(file_path, "wb") as f:
+                        f.write(audio_bytes)
+                        
+                    public_url = f"/assets/audio/scene_{scene_id}.mp3"
+                    supabase.table("episode_scenes").update({"status": "audio_ready", "audio_url": public_url}).eq("id", scene_id).execute()
+                    print(f"[+] Audio generated for Scene {scene.get('scene_number', '?')}")
+                    return
+                    
+            print(f"[-] RunPod Kokoro generation failed: {data}")
+            supabase.table("episode_scenes").update({"status": "error"}).eq("id", scene_id).execute()
         else:
-            print(f"[-] ElevenLabs error: {r.text}")
+            print(f"[-] RunPod Kokoro error: {r.text}")
             supabase.table("episode_scenes").update({"status": "error"}).eq("id", scene_id).execute()
     except Exception as e:
-        print(f"[-] Error calling ElevenLabs: {e}")
+        print(f"[-] Error calling RunPod Kokoro: {e}")
         supabase.table("episode_scenes").update({"status": "error"}).eq("id", scene_id).execute()
+
 
 async def generate_scene_video(scene):
     scene_id = scene['id']
