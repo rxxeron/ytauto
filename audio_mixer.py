@@ -187,10 +187,19 @@ async def generate_voice(node):
         local_path = f"local_cache/assets/audio/chunk_{scene_id}.mp3"
         # Only use local cache if the file actually has audio data (> 100 bytes)
         if os.path.exists(local_path) and os.path.getsize(local_path) > 100:
-            print(f"  -> Found existing audio chunk for {char_name} (Scene: {scene_id}). Skipping RunPod generation!")
             with open(local_path, "rb") as f:
-                node['audio_bytes'] = f.read()
-            return node
+                header = f.read(10)
+                if not header.startswith(b'{'):
+                    f.seek(0)
+                    print(f"  -> Found existing audio chunk for {char_name} (Scene: {scene_id}). Skipping RunPod generation!")
+                    node['audio_bytes'] = f.read()
+                    return node
+                else:
+                    print(f"  -> Found corrupted JSON in cache for {char_name} (Scene: {scene_id}). Deleting and regenerating...")
+            try:
+                os.remove(local_path)
+            except:
+                pass
             
     try:
         print(f"  -> Fetching Kokoro TTS via RunPod for {char_name} (Voice: {kokoro_voice}, Speed: {speed})")
@@ -217,7 +226,11 @@ async def generate_voice(node):
             import requests
             r = requests.post(url, headers=headers, json=payload)
             if r.status_code == 200:
-                node['audio_bytes'] = r.content
+                if 'application/json' in r.headers.get('Content-Type', '') or r.content.startswith(b'{'):
+                    print("RunPod FastAPI logic error (returned JSON instead of MP3):", r.text)
+                    node['audio_bytes'] = None
+                else:
+                    node['audio_bytes'] = r.content
             else:
                 print("RunPod FastAPI error:", r.status_code, r.text)
                 node['audio_bytes'] = None
