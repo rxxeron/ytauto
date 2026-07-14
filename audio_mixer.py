@@ -169,8 +169,10 @@ async def generate_voice(node):
     dialogue = node.get("dialogue", "")
     
     import re
+    # Remove <voice=...> tags that Gemini might inject
+    clean_dialogue = re.sub(r'<voice=[^>]+>', '', dialogue)
     # Remove bracketed text like [Scene 1], [Narrator]:, or [Narrator]
-    clean_dialogue = re.sub(r'\[.*?\]:?\s*', '', dialogue)
+    clean_dialogue = re.sub(r'\[.*?\]:?\s*', '', clean_dialogue)
     # Also aggressively strip unbracketed character prefixes like "Narrator:" or "John:" at the start of the string
     clean_dialogue = re.sub(r'^[A-Za-z\s]+:\s*', '', clean_dialogue)
     # Also strip out literal quotation marks to prevent weird TTS inflection

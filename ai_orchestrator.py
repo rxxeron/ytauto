@@ -712,8 +712,12 @@ async def process_reel_scene_breakdown(reel):
         # Clean up the script first to remove [Scene X] and [Narrator]: tags
         import re
         # Remove common AI conversational filler at the start
-        clean_script = re.sub(r'(?i)^(here is|sure,?|okay,?|here\'s|certainly|absolutely).*?:\s*\n*', '', script)
+        clean_script = re.sub(r'(?i)^(here is|sure,?|okay,?|here\'s|certainly|absolutely).*?:\s*', '', script)
+        # Remove <voice=...> tags that Gemini might inject
+        clean_script = re.sub(r'<voice=[^>]+>', '', clean_script)
+        # Remove bracketed text like [Scene 1] and [Narrator]:
         clean_script = re.sub(r'\[.*?\]:?\s*', '', clean_script)
+        # Remove unbracketed prefixes like "Narrator:"
         clean_script = re.sub(r'^[A-Za-z\s]+:\s*', '', clean_script)
         clean_script = clean_script.replace('"', '')
         
