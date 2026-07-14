@@ -96,10 +96,20 @@ export default function ParallelReelChatView({ reelId, onBack }) {
     fetchChatHistory();
   };
 
-  const handleFinalize = async (aiMessage) => {
-    if (confirm(`Are you sure you want to finalize the script with ${aiMessage.model}'s draft?`)) {
+  const handleFinalize = async (aiMessage, append = false) => {
+    let actionText = append ? 'append this to the current finalized' : 'finalize the';
+    if (confirm(`Are you sure you want to ${actionText} script with ${aiMessage.model}'s draft?`)) {
+      
+      let newContent = aiMessage.content;
+      if (append) {
+        const { data } = await supabase.from('reels').select('final_script_content').eq('id', reelId).single();
+        if (data && data.final_script_content) {
+          newContent = data.final_script_content + "\n\n" + aiMessage.content;
+        }
+      }
+
       await supabase.from('reels').update({
-        final_script_content: aiMessage.content,
+        final_script_content: newContent,
         status: 'approved',
         master_audio_url: null,
         final_video_url: null
@@ -108,8 +118,12 @@ export default function ParallelReelChatView({ reelId, onBack }) {
       // Delete old scenes so they don't show up in assets
       await supabase.from('reel_scenes').delete().eq('reel_id', reelId);
       
-      alert('Script Finalized! Moving to Director Board.');
-      onBack();
+      if (append) {
+        alert('Script Appended! You can continue chatting to generate more parts, or click Back to go to the Director Board.');
+      } else {
+        alert('Script Finalized! Moving to Director Board.');
+        onBack();
+      }
     }
   };
 
@@ -178,12 +192,22 @@ export default function ParallelReelChatView({ reelId, onBack }) {
                     <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(0,0,0,0.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontWeight: '600', textTransform: 'capitalize', fontSize: '14px', color: 'var(--accent-primary)' }}>{ai.model}</span>
                       {ai.status === 'success' && (
-                        <button 
-                          onClick={() => handleFinalize(ai)}
-                          style={{ background: 'rgba(52, 211, 153, 0.2)', color: '#34d399', border: 'none', padding: '4px 12px', borderRadius: '99px', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}
-                        >
-                          <CheckCircle size={12} /> Set Final
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button 
+                            onClick={() => handleFinalize(ai, true)}
+                            style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', border: 'none', padding: '4px 12px', borderRadius: '99px', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}
+                            title="Append this to the currently finalized script"
+                          >
+                            <CheckCircle size={12} /> Append to Final
+                          </button>
+                          <button 
+                            onClick={() => handleFinalize(ai, false)}
+                            style={{ background: 'rgba(52, 211, 153, 0.2)', color: '#34d399', border: 'none', padding: '4px 12px', borderRadius: '99px', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}
+                            title="Overwrite and finalize script"
+                          >
+                            <CheckCircle size={12} /> Set Final
+                          </button>
+                        </div>
                       )}
                     </div>
                     
