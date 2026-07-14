@@ -31,10 +31,18 @@ export default function ParallelChatView({ episodeId, onBack }) {
 
   useEffect(() => {
     scrollToBottom();
-  }, [activeTab]);
+  }, [chatHistory, activeTab]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = (force = false) => {
+    const container = document.getElementById("chat-scroll-container");
+    if (container) {
+      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+      if (isNearBottom || force) {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   };
 
   const fetchEpisode = async () => {
@@ -132,6 +140,9 @@ export default function ParallelChatView({ episodeId, onBack }) {
 
     // Fetch instantly to show loading state
     fetchChatHistory();
+    
+    // Force scroll to bottom when user explicitly sends a message
+    setTimeout(() => scrollToBottom(true), 100);
   };
 
   const handleToggleDraft = (aiMessage) => {
@@ -175,7 +186,7 @@ export default function ParallelChatView({ episodeId, onBack }) {
 
     setSelectedDrafts([]);
     fetchChatHistory();
-    scrollToBottom();
+    scrollToBottom(true);
   };
 
   const handleRetry = async (aiMessage) => {
@@ -184,17 +195,28 @@ export default function ParallelChatView({ episodeId, onBack }) {
       content: ''
     }).eq('id', aiMessage.id);
     fetchChatHistory();
-  };
+  const handleFinalize = async (aiMessage, append = false) => {
+    let actionText = append ? 'append this to the current finalized' : 'finalize the';
+    if (confirm(`Are you sure you want to ${actionText} script with ${aiMessage.model}'s draft?`)) {
+      
+      let newContent = aiMessage.content;
+      if (append) {
+        const { data } = await supabase.from('episodes').select('final_script_content').eq('id', episodeId).single();
+        if (data && data.final_script_content) {
+          newContent = data.final_script_content + "\n\n" + aiMessage.content;
+        }
+      }
 
-  const handleFinalize = async (aiMessage) => {
-    if (confirm(`Are you sure you want to finalize the script with ${aiMessage.model}'s draft?`)) {
       await supabase.from('episodes').update({
-        final_script_content: aiMessage.content,
+        final_script_content: newContent,
         status: 'generating_prompts'
       }).eq('id', episodeId);
       
-      alert('Script Finalized! AI is now breaking it down into scenes.');
-      onBack();
+      if (append) {
+        alert('Script Appended! You can continue chatting or click Back when finished.');
+      } else {
+        alert('Script Finalized! AI will break it down into scenes. You can continue chatting or click Back when finished.');
+      }
     }
   };
 
@@ -308,7 +330,7 @@ export default function ParallelChatView({ episodeId, onBack }) {
       ) : (
         <>
           {/* Chat History Container */}
-          <div className="glass-panel" style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '32px', marginBottom: '24px' }}>
+          <div id="chat-scroll-container" className="glass-panel" style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '32px', marginBottom: '24px' }}>
         
         {chatHistory.length === 0 ? (
           <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)', maxWidth: '400px' }}>
@@ -353,12 +375,20 @@ export default function ParallelChatView({ episodeId, onBack }) {
                         <span style={{ fontWeight: '600', textTransform: 'capitalize', fontSize: '14px', color: 'var(--accent-primary)' }}>{ai.model}</span>
                       </div>
                       {ai.status === 'success' && (
-                        <button 
-                          onClick={() => handleFinalize(ai)}
-                          style={{ background: 'rgba(52, 211, 153, 0.2)', color: '#34d399', border: 'none', padding: '4px 12px', borderRadius: '99px', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}
-                        >
-                          <CheckCircle size={12} /> Set Final
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button 
+                            onClick={() => handleFinalize(ai, true)}
+                            style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#3b82f6', border: 'none', padding: '4px 12px', borderRadius: '99px', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}
+                          >
+                            <CheckCircle size={12} /> Append to Final
+                          </button>
+                          <button 
+                            onClick={() => handleFinalize(ai, false)}
+                            style={{ background: 'rgba(52, 211, 153, 0.2)', color: '#34d399', border: 'none', padding: '4px 12px', borderRadius: '99px', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}
+                          >
+                            <CheckCircle size={12} /> Set Final
+                          </button>
+                        </div>
                       )}
                       {ai.status === 'error' && (
                         <button 

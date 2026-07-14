@@ -25,8 +25,16 @@ export default function ParallelReelChatView({ reelId, onBack }) {
     scrollToBottom();
   }, [chatHistory]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = (force = false) => {
+    const container = document.getElementById("chat-scroll-container");
+    if (container) {
+      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+      if (isNearBottom || force) {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   };
 
   const fetchReel = async () => {
@@ -94,6 +102,9 @@ export default function ParallelReelChatView({ reelId, onBack }) {
 
     // Fetch instantly to show loading state
     fetchChatHistory();
+    
+    // Force scroll to bottom when user explicitly sends a message
+    setTimeout(() => scrollToBottom(true), 100);
   };
 
   const handleFinalize = async (aiMessage, append = false) => {
@@ -119,10 +130,9 @@ export default function ParallelReelChatView({ reelId, onBack }) {
       await supabase.from('reel_scenes').delete().eq('reel_id', reelId);
       
       if (append) {
-        alert('Script Appended! You can continue chatting to generate more parts, or click Back to go to the Director Board.');
+        alert('Script Appended! You can continue chatting to generate more parts, or click Back when finished.');
       } else {
-        alert('Script Finalized! Moving to Director Board.');
-        onBack();
+        alert('Script Finalized! You can continue chatting or click Back when finished.');
       }
     }
   };
@@ -155,7 +165,7 @@ export default function ParallelReelChatView({ reelId, onBack }) {
       </div>
 
       {/* Chat History Container */}
-      <div className="glass-panel" style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '32px', marginBottom: '24px' }}>
+      <div id="chat-scroll-container" className="glass-panel" style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '32px', marginBottom: '24px' }}>
         
         {chatHistory.length === 0 ? (
           <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)', maxWidth: '400px' }}>
