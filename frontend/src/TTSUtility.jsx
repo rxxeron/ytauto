@@ -115,10 +115,13 @@ export default function TTSUtility() {
     }
 
     setLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    
     const { error } = await supabase.from('tts_jobs').insert([{
       text_content: text.trim(),
       voice_id: voiceId,
-      status: 'pending'
+      status: 'pending',
+      user_id: user?.id
     }]);
 
     if (error) {
