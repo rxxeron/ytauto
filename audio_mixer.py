@@ -55,7 +55,7 @@ def generate_edl(scenes):
     
     The timeline must contain the following node types:
     - {"type": "silence", "duration_seconds": float} -> Used for pacing between dialogue based on the script's emotional context.
-    - {"type": "voice", "scene_id": string, "dialogue": string, "character_name": string, "voice": string} -> The voice line.
+    - {"type": "voice", "scene_id": string, "dialogue": string, "character_name": string, "voice": string, "speed": float} -> The voice line.
     
     Do NOT output Markdown. Just output the raw JSON object.
     """
@@ -68,6 +68,7 @@ def generate_edl(scenes):
             "character_name": s["character_name"],
             "emotion_tag": s["emotion_tag"],
             "voice": s.get("voice", "en-US-GuyNeural"),
+            "speed": float(s.get("speed", 1.0)),
             "dialogue": s["dialogue"]
         })
         
@@ -102,7 +103,7 @@ def generate_episode_edl(scenes):
     
     The timeline must contain the following node types:
     - {"type": "silence", "duration_seconds": float} -> Used for pacing between dialogue based on the script's emotional context.
-    - {"type": "voice", "scene_id": string, "dialogue": string, "character_name": string, "voice": string} -> The voice line.
+    - {"type": "voice", "scene_id": string, "dialogue": string, "character_name": string, "voice": string, "speed": float} -> The voice line.
     
     Do NOT output Markdown. Just output the raw JSON object.
     """
@@ -115,6 +116,7 @@ def generate_episode_edl(scenes):
             "character_name": s["character_name"],
             "emotion_tag": s["emotion_tag"],
             "voice": s.get("voice", "en-US-GuyNeural"),
+            "speed": float(s.get("speed", 1.0)),
             "dialogue": s["dialogue"]
         })
         
@@ -169,10 +171,13 @@ async def generate_voice(node):
     import re
     # Remove bracketed text like [Scene 1], [Narrator]:, or [Narrator]
     clean_dialogue = re.sub(r'\[.*?\]:?\s*', '', dialogue)
+    # Also aggressively strip unbracketed character prefixes like "Narrator:" or "John:" at the start of the string
+    clean_dialogue = re.sub(r'^[A-Za-z\s]+:\s*', '', clean_dialogue)
     # Also strip out literal quotation marks to prevent weird TTS inflection
     clean_dialogue = clean_dialogue.replace('"', '').replace('\"', '').strip()
     
     voice = node.get("voice", "en-US-GuyNeural")
+    speed = float(node.get("speed", 1.0))
             
     kokoro_voice = voice.replace("kokoro_", "") if voice.startswith("kokoro_") else "af_bella"
     
@@ -187,7 +192,7 @@ async def generate_voice(node):
             return node
             
     try:
-        print(f"  -> Fetching Kokoro TTS via RunPod for {char_name} (Voice: {kokoro_voice})")
+        print(f"  -> Fetching Kokoro TTS via RunPod for {char_name} (Voice: {kokoro_voice}, Speed: {speed})")
         runpod_key = os.getenv("RUNPOD_API_KEY")
         runpod_endpoint = os.getenv("RUNPOD_KOKORO_ENDPOINT_ID")
         
@@ -206,7 +211,7 @@ async def generate_voice(node):
                 "input": clean_dialogue,
                 "voice": kokoro_voice,
                 "response_format": "mp3",
-                "speed": 1.0
+                "speed": speed
             }
             import requests
             r = requests.post(url, headers=headers, json=payload)

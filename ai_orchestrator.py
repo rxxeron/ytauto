@@ -735,7 +735,8 @@ async def process_reel_scene_breakdown(reel):
                 "dialogue": chunk,
                 "character_name": "Narrator",
                 "emotion_tag": "calm",
-                "voice": "gemini_Puck", # Gemini Native Audio (Puck)
+                "voice": "kokoro_af_bella", # Use a soft Kokoro voice
+                "speed": 0.85, # Slower for sleep stories
                 "status": "pending"
             })
             
@@ -748,7 +749,7 @@ async def process_reel_scene_breakdown(reel):
     You are an AI director for Historical Shorts. Take the following script and break it down into a JSON array of scenes.
     For each scene, you must provide:
     1. A 'search_query': A highly specific 1-3 word keyword phrase to search for a Stock Video on Pexels/Pixabay (e.g. "Rome Colosseum", "Space Launch", "Nature waterfall").
-    2. A 'dialogue': The exact text to be spoken by the character. Leave empty if no dialogue.
+    2. A 'dialogue': The exact text to be spoken by the character. Leave empty if no dialogue. CRITICAL: DO NOT include the character name or any voice tags (like "Narrator:") in the dialogue field! ONLY include the actual spoken words.
     3. A 'character_name': The name of the speaker.
     4. A 'voice_id': Select the MOST APPROPRIATE Voice ID for this character from the following list. You can choose from Kokoro, OpenAI, Gemini Native Audio, or ElevenLabs.
        Kokoro Voices (Free, Unlimited, Highly Emotional):
