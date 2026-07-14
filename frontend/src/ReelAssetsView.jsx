@@ -140,20 +140,34 @@ export default function ReelAssetsView({ reelId, onBack }) {
         )}
 
         {reel.status === 'prompts_ready' && (
-          <button 
-            className="btn-primary" 
-            style={{ padding: '10px 20px', fontWeight: 'bold' }}
-            onClick={async () => {
-              await supabase.from('reels').update({ status: 'generating_audio', master_audio_url: null }).eq('id', reelId);
-              if (reel.reel_type !== 'sleep') {
-                await supabase.from('reel_scenes').update({ status: 'generating_video', image_url: null }).eq('reel_id', reelId);
-              }
-              setReel({...reel, status: 'generating_audio', master_audio_url: null});
-              fetchData();
-            }}
-          >
-            Fetch Assets & Audio
-          </button>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button 
+              className="btn-secondary" 
+              style={{ padding: '10px 20px', fontWeight: 'bold' }}
+              onClick={async () => {
+                if(window.confirm("Are you sure you want to completely re-chunk this script into new scenes? This will delete all current scene assets.")) {
+                  await supabase.from('reels').update({ status: 'generating_prompts' }).eq('id', reelId);
+                  setReel({...reel, status: 'generating_prompts'});
+                }
+              }}
+            >
+              Re-Chunk Script
+            </button>
+            <button 
+              className="btn-primary" 
+              style={{ padding: '10px 20px', fontWeight: 'bold' }}
+              onClick={async () => {
+                await supabase.from('reels').update({ status: 'generating_audio', master_audio_url: null }).eq('id', reelId);
+                if (reel.reel_type !== 'sleep') {
+                  await supabase.from('reel_scenes').update({ status: 'generating_video', image_url: null }).eq('reel_id', reelId);
+                }
+                setReel({...reel, status: 'generating_audio', master_audio_url: null});
+                fetchData();
+              }}
+            >
+              Fetch Assets & Audio
+            </button>
+          </div>
         )}
 
         {['audio_ready', 'completed', 'error'].includes(reel.status) && (
