@@ -7,6 +7,8 @@ export default function StorageManager({ userRole }) {
   const [totalSize, setTotalSize] = useState(0);
   const [loading, setLoading] = useState(true);
 
+  const [selectedFiles, setSelectedFiles] = useState([]);
+
   // Free tier Supabase Storage Limit (1 GB = 1073741824 bytes)
   const STORAGE_LIMIT = 1073741824;
   
@@ -16,6 +18,7 @@ export default function StorageManager({ userRole }) {
 
   const fetchStorageFiles = async () => {
     setLoading(true);
+    setSelectedFiles([]); // Clear selection on refresh
     try {
       // Supabase list files in 'media' bucket, empty path '' gets root files
       // We will fetch from 'audio' and 'videos' folders
@@ -46,19 +49,33 @@ export default function StorageManager({ userRole }) {
     setLoading(false);
   };
 
+  const handleBulkDelete = async () => {
+    if (selectedFiles.length === 0) return;
+    
+    if (!window.confirm(`Are you sure you want to delete ${selectedFiles.length} files? This action cannot be undone and will break videos using these files.`)) {
+      return;
+    }
+    
+    setLoading(true);
+    const { error } = await supabase.storage.from('media').remove(selectedFiles);
+    if (error) {
+      alert("Error deleting files: " + error.message);
+      setLoading(false);
+    } else {
+      fetchStorageFiles();
+    }
+  };
+
   const handleDelete = async (filePath) => {
-    if (userRole !== 'super_admin') {
-      alert("Only Super Admins can delete storage files.");
+    if (!window.confirm(`Are you sure you want to delete ${filePath}? This action cannot be undone.`)) {
       return;
     }
     
-    if (!window.confirm(`Are you sure you want to delete ${filePath}? This action cannot be undone and will break videos using this file.`)) {
-      return;
-    }
-    
+    setLoading(true);
     const { error } = await supabase.storage.from('media').remove([filePath]);
     if (error) {
       alert("Error deleting file: " + error.message);
+      setLoading(false);
     } else {
       fetchStorageFiles();
     }
@@ -84,9 +101,16 @@ export default function StorageManager({ userRole }) {
           <h1 style={{ fontSize: '32px', margin: '0 0 8px 0' }}>Cloud Storage Manager</h1>
           <p style={{ color: 'var(--text-secondary)' }}>Monitor and clean up your Azure/Supabase cloud media storage bucket.</p>
         </div>
-        <button onClick={fetchStorageFiles} className="btn-secondary">
-          Refresh Storage
-        </button>
+        <div style={{ display: 'flex', gap: '16px' }}>
+          {selectedFiles.length > 0 && (
+            <button onClick={handleBulkDelete} className="btn-danger" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Trash2 size={16} /> Delete Selected ({selectedFiles.length})
+            </button>
+          )}
+          <button onClick={fetchStorageFiles} className="btn-secondary">
+            Refresh Storage
+          </button>
+        </div>
       </div>
 
       <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px' }}>
@@ -115,6 +139,20 @@ export default function StorageManager({ userRole }) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-light)', color: 'var(--text-muted)' }}>
+                <th style={{ padding: '16px', width: '40px' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={selectedFiles.length === files.length && files.length > 0}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedFiles(files.map(f => f.path));
+                      } else {
+                        setSelectedFiles([]);
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                </th>
                 <th style={{ padding: '16px', fontWeight: '500' }}>File Name</th>
                 <th style={{ padding: '16px', fontWeight: '500' }}>Size</th>
                 <th style={{ padding: '16px', fontWeight: '500' }}>Created At</th>
@@ -123,7 +161,21 @@ export default function StorageManager({ userRole }) {
             </thead>
             <tbody>
               {files.map(file => (
-                <tr key={file.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <tr key={file.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: selectedFiles.includes(file.path) ? 'rgba(59, 130, 246, 0.05)' : 'transparent' }}>
+                  <td style={{ padding: '16px' }}>
+                    <input 
+                      type="checkbox"
+                      checked={selectedFiles.includes(file.path)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedFiles([...selectedFiles, file.path]);
+                        } else {
+                          setSelectedFiles(selectedFiles.filter(p => p !== file.path));
+                        }
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </td>
                   <td style={{ padding: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <div style={{ padding: '8px', background: 'rgba(59, 130, 246, 0.1)', borderRadius: '8px', color: '#3b82f6' }}>
@@ -146,11 +198,9 @@ export default function StorageManager({ userRole }) {
                       <a href={getPublicUrl(file.path)} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ padding: '6px' }} title="Download">
                         <Download size={16} />
                       </a>
-                      {userRole === 'super_admin' && (
-                        <button onClick={() => handleDelete(file.path)} className="btn-danger" style={{ padding: '6px' }} title="Delete File">
-                          <Trash2 size={16} />
-                        </button>
-                      )}
+                      <button onClick={() => handleDelete(file.path)} className="btn-danger" style={{ padding: '6px' }} title="Delete File">
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </td>
                 </tr>
