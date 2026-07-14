@@ -219,6 +219,12 @@ export default function SceneManager({ episodeId, onBack }) {
                 </div>
               )}
 
+              {scene.status === 'error' && scene.error_message && (
+                <div style={{ marginTop: '4px', padding: '12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '13px', fontFamily: 'monospace' }}>
+                  <strong>Generation Error:</strong> {scene.error_message}
+                </div>
+              )}
+
               {(() => {
                 if (!scene.character_name) return null;
                 const searchName = scene.character_name.toLowerCase();

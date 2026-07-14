@@ -867,8 +867,9 @@ async def generate_scene_audio(scene):
     runpod_endpoint = os.getenv("RUNPOD_KOKORO_ENDPOINT_ID")
     
     if not runpod_endpoint or not runpod_key:
-        print("[-] Missing RUNPOD_KOKORO_ENDPOINT_ID or RUNPOD_API_KEY in .env")
-        supabase.table("episode_scenes").update({"status": "error"}).eq("id", scene_id).execute()
+        err = "Missing RUNPOD_KOKORO_ENDPOINT_ID or RUNPOD_API_KEY in .env"
+        print(f"[-] {err}")
+        supabase.table("episode_scenes").update({"status": "error", "error_message": err}).eq("id", scene_id).execute()
         return
 
     url = f"https://api.runpod.ai/v2/{runpod_endpoint}/runsync"
@@ -920,14 +921,17 @@ async def generate_scene_audio(scene):
                     print(f"[+] Audio generated for Scene {scene.get('scene_number', '?')}")
                     return
                     
-            print(f"[-] RunPod Kokoro generation failed: {data}")
-            supabase.table("episode_scenes").update({"status": "error"}).eq("id", scene_id).execute()
+            err = f"RunPod Kokoro generation failed: {data}"
+            print(f"[-] {err}")
+            supabase.table("episode_scenes").update({"status": "error", "error_message": err}).eq("id", scene_id).execute()
         else:
-            print(f"[-] RunPod Kokoro error: {r.text}")
-            supabase.table("episode_scenes").update({"status": "error"}).eq("id", scene_id).execute()
+            err = f"RunPod Kokoro error: {r.text}"
+            print(f"[-] {err}")
+            supabase.table("episode_scenes").update({"status": "error", "error_message": err}).eq("id", scene_id).execute()
     except Exception as e:
-        print(f"[-] Error calling RunPod Kokoro: {e}")
-        supabase.table("episode_scenes").update({"status": "error"}).eq("id", scene_id).execute()
+        err = f"Error calling RunPod Kokoro: {e}"
+        print(f"[-] {err}")
+        supabase.table("episode_scenes").update({"status": "error", "error_message": err}).eq("id", scene_id).execute()
 
 
 async def generate_scene_video(scene):
@@ -952,8 +956,9 @@ async def generate_scene_video(scene):
         supabase.table("episode_scenes").update({"status": "video_ready", "video_url": video_url}).eq("id", scene_id).execute()
         print(f"[+] Video generated for Scene {scene['scene_number']}")
     except Exception as e:
-        print(f"[-] Error generating video: {e}")
-        supabase.table("episode_scenes").update({"status": "error"}).eq("id", scene_id).execute()
+        err = f"Error generating video: {e}"
+        print(f"[-] {err}")
+        supabase.table("episode_scenes").update({"status": "error", "error_message": err}).eq("id", scene_id).execute()
 
 
 async def main_loop():

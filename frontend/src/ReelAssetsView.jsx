@@ -510,10 +510,15 @@ export default function ReelAssetsView({ reelId, onBack }) {
                       />
                       Opt-Out (Extend Prev Clip)
                     </label>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>
+                    <span style={{ fontSize: '12px', color: scene.status === 'error' ? '#ef4444' : 'var(--text-muted)', background: scene.status === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>
                       Status: {scene.status}
                     </span>
                   </div>
+                  {scene.status === 'error' && scene.error_message && (
+                    <div style={{ marginTop: '12px', padding: '8px 12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '6px', color: '#fca5a5', fontSize: '13px', fontFamily: 'monospace' }}>
+                      <strong>Error:</strong> {scene.error_message}
+                    </div>
+                  )}
                 </div>
                 
                 {reel.reel_type !== 'sleep' && (
