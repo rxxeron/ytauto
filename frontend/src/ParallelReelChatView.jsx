@@ -7,6 +7,8 @@ export default function ParallelReelChatView({ reelId, onBack }) {
   const [chatHistory, setChatHistory] = useState([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(true);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editScriptContent, setEditScriptContent] = useState('');
   const messagesEndRef = useRef(null);
 
   // The model we test against
@@ -162,6 +164,17 @@ export default function ParallelReelChatView({ reelId, onBack }) {
             <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>Discuss and refine your script with AI.</p>
           </div>
         </div>
+        <button 
+          onClick={async () => {
+            const { data } = await supabase.from('reels').select('final_script_content').eq('id', reel.id).single();
+            setEditScriptContent(data?.final_script_content || '');
+            setShowEditModal(true);
+          }}
+          className="btn-secondary" 
+          style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}
+        >
+          <BrainCircuit size={16} /> Edit Final Script
+        </button>
       </div>
 
       {/* Chat History Container */}
@@ -278,6 +291,33 @@ export default function ParallelReelChatView({ reelId, onBack }) {
         </button>
       </div>
 
+      {/* Edit Script Modal */}
+      {showEditModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="glass-panel animate-fade-in" style={{ width: '80%', maxWidth: '800px', height: '80%', display: 'flex', flexDirection: 'column', padding: '24px' }}>
+            <h2 style={{ margin: '0 0 16px 0' }}>Edit Master Script</h2>
+            <p style={{ margin: '0 0 16px 0', color: 'var(--text-secondary)' }}>You can delete the sections you appended or manually rewrite parts.</p>
+            <textarea
+              value={editScriptContent}
+              onChange={(e) => setEditScriptContent(e.target.value)}
+              style={{ flex: 1, background: 'rgba(0,0,0,0.3)', color: 'white', border: '1px solid var(--border-light)', borderRadius: '8px', padding: '16px', fontSize: '14px', fontFamily: 'monospace', resize: 'none' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', marginTop: '16px' }}>
+              <button className="btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+              <button 
+                className="btn-primary" 
+                onClick={async () => {
+                  await supabase.from('reels').update({ final_script_content: editScriptContent }).eq('id', reel.id);
+                  setShowEditModal(false);
+                }}
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
     </div>
   );
 }
