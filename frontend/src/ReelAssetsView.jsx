@@ -753,8 +753,8 @@ export default function ReelAssetsView({ reelId, onBack }) {
                           }}
                         >
                           <option value={0.7}>0.7x (Very Slow)</option>
-                          <option value={0.85}>0.85x (Slow/Sleep)</option>
-                          <option value={1.0}>1.0x (Normal)</option>
+                          <option value={0.85}>0.85x (Slow)</option>
+                          <option value={1.0}>1.0x (Default)</option>
                           <option value={1.15}>1.15x (Fast)</option>
                           <option value={1.3}>1.3x (Very Fast)</option>
                           <option value={1.5}>1.5x (Speedreader)</option>
