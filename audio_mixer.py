@@ -174,201 +174,80 @@ async def generate_voice(node):
     
     voice = node.get("voice", "en-US-GuyNeural")
             
-    if voice.startswith("gemini_"):
-        try:
-            print(f"  -> Fetching Gemini Native Audio for {char_name}: '{clean_dialogue[:30]}...'")
-            gemini_voice_name = voice.split("_")[1] # e.g. "Puck"
-            gemini_keys = os.getenv("GEMINI_API_KEY", "").split(",")
-            key = gemini_keys[0].strip() if gemini_keys else ""
-            
-            tts_models = [
-                "gemini-3.1-flash-tts-preview",
-                "gemini-2.5-flash-preview-tts"
-            ]
-            
-            chunks = []
-            current_chunk = ""
-            for paragraph in clean_dialogue.split('\n'):
-                if not paragraph.strip():
-                    continue
-                if len(current_chunk) + len(paragraph) < 2500:
-                    current_chunk += paragraph + "\n"
-                else:
-                    if current_chunk.strip():
-                        chunks.append(current_chunk.strip())
-                    current_chunk = paragraph + "\n"
-            if current_chunk.strip():
-                chunks.append(current_chunk.strip())
-
-            all_pcm_bytes = b""
-            for i, chunk in enumerate(chunks):
-                if len(chunks) > 1:
-                    print(f"     -> Processing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
-                
-                data = {
-                    "contents": [{"role": "user", "parts": [{"text": f"Read the following exactly as written:\n\n{chunk}"}]}],
-                    "generationConfig": {
-                        "responseModalities": ["AUDIO"],
-                        "speechConfig": {
-                            "voiceConfig": {
-                                "prebuiltVoiceConfig": {
-                                    "voiceName": gemini_voice_name
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                success = False
-                for tts_model in tts_models:
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{tts_model}:generateContent?key={key}"
-                    print(f"     -> Trying model: {tts_model}...")
-                    import requests
-                    r = requests.post(url, json=data)
-                    if r.status_code == 200:
-                        resp = r.json()
-                        b64_audio = resp['candidates'][0]['content']['parts'][0]['inlineData']['data']
-                        all_pcm_bytes += base64.b64decode(b64_audio)
-                        success = True
-                        break
-                    else:
-                        print(f"     -> Failed on {tts_model}: {r.status_code}")
-                
-                if not success:
-                    print(f"     [!] All Gemini TTS models failed for this chunk.")
-                    all_pcm_bytes = None
-                    break
-            
-            if all_pcm_bytes:
-                node['audio_bytes'] = pcm_to_mp3_bytes(all_pcm_bytes)
-            else:
-                node['audio_bytes'] = None
-        except Exception as e:
-            print(f"Gemini TTS exception: {e}")
+    kokoro_voice = voice.replace("kokoro_", "") if voice.startswith("kokoro_") else "af_bella"
+    
+    try:
+        print(f"  -> Fetching Kokoro TTS via RunPod for {char_name} (Voice: {kokoro_voice})")
+        runpod_key = os.getenv("RUNPOD_API_KEY")
+        runpod_endpoint = os.getenv("RUNPOD_KOKORO_ENDPOINT_ID")
+        
+        if not runpod_endpoint:
+            print("Missing RUNPOD_KOKORO_ENDPOINT_ID in .env")
             node['audio_bytes'] = None
-    elif voice.startswith("openai_"):
-        try:
-            print(f"  -> Fetching OpenAI TTS for {char_name}")
-            openai_voice = voice.split("_")[1] # e.g. "alloy"
-            openai_keys = os.getenv("CHATGPT_API_KEY", "").split(",")
-            import random
-            key = random.choice(openai_keys).strip() if openai_keys else ""
+            return node
             
-            from openai import OpenAI
-            client = OpenAI(api_key=key)
-            response = client.audio.speech.create(
-                model="tts-1",
-                voice=openai_voice,
-                input=clean_dialogue
-            )
-            node['audio_bytes'] = response.content
-        except Exception as e:
-            print(f"OpenAI TTS Exception: {e}")
-            node['audio_bytes'] = None
-            
-    elif voice.startswith("kokoro_"):
-        try:
-            print(f"  -> Fetching Kokoro TTS via RunPod for {char_name}")
-            kokoro_voice = voice.replace("kokoro_", "")
-            runpod_key = os.getenv("RUNPOD_API_KEY")
-            runpod_endpoint = os.getenv("RUNPOD_KOKORO_ENDPOINT_ID")
-            
-            if not runpod_endpoint:
-                print("Missing RUNPOD_KOKORO_ENDPOINT_ID in .env")
-                node['audio_bytes'] = None
-                return node
-                
-            if "." in runpod_endpoint:
-                url = f"http://{runpod_endpoint}/v1/audio/speech"
-                headers = {
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": "kokoro",
-                    "input": clean_dialogue,
-                    "voice": kokoro_voice,
-                    "response_format": "mp3",
-                    "speed": 1.0
-                }
-                import requests
-                r = requests.post(url, headers=headers, json=payload)
-                if r.status_code == 200:
-                    node['audio_bytes'] = r.content
-                else:
-                    print("RunPod FastAPI error:", r.status_code, r.text)
-                    node['audio_bytes'] = None
-            else:
-                url = f"https://api.runpod.ai/v2/{runpod_endpoint}/runsync"
-                headers = {
-                    "Authorization": f"Bearer {runpod_key}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "input": {
-                        "text": clean_dialogue,
-                        "voice": kokoro_voice,
-                        "speed": 1.0
-                    }
-                }
-                import requests
-                import base64
-                import time
-                r = requests.post(url, headers=headers, json=payload)
-                if r.status_code == 200:
-                    data = r.json()
-                    
-                    # Handle async polling if it was pushed to queue (like during cold start)
-                    job_id = data.get('id')
-                    while data.get('status') in ['IN_QUEUE', 'IN_PROGRESS']:
-                        time.sleep(2)
-                        status_url = f"https://api.runpod.ai/v2/{runpod_endpoint}/status/{job_id}"
-                        r_status = requests.get(status_url, headers=headers)
-                        if r_status.status_code == 200:
-                            data = r_status.json()
-                        else:
-                            break
-
-                    if data.get('status') == 'COMPLETED':
-                        audio_base64 = data['output']['audio_base64']
-                        node['audio_bytes'] = base64.b64decode(audio_base64)
-                    else:
-                        print("RunPod Serverless error:", data)
-                        node['audio_bytes'] = None
-                else:
-                    print("RunPod API error:", r.status_code, r.text)
-                    node['audio_bytes'] = None
-        except Exception as e:
-            print(f"Kokoro RunPod exception: {e}")
-            node['audio_bytes'] = None
-
-    elif len(voice) == 20: # ElevenLabs IDs
-        try:
-            print(f"  -> Fetching ElevenLabs TTS for {char_name}")
-            el_key = os.getenv("ELEVENLABS_API_KEY")
-            url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}"
+        if "." in runpod_endpoint:
+            url = f"http://{runpod_endpoint}/v1/audio/speech"
             headers = {
-                "xi-api-key": el_key,
                 "Content-Type": "application/json"
             }
             payload = {
-                "text": clean_dialogue,
-                "model_id": "eleven_monolingual_v1",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.5}
+                "model": "kokoro",
+                "input": clean_dialogue,
+                "voice": kokoro_voice,
+                "response_format": "mp3",
+                "speed": 1.0
             }
+            import requests
             r = requests.post(url, headers=headers, json=payload)
             if r.status_code == 200:
                 node['audio_bytes'] = r.content
             else:
-                print("ElevenLabs API error:", r.status_code, r.text)
+                print("RunPod FastAPI error:", r.status_code, r.text)
                 node['audio_bytes'] = None
-        except Exception as e:
-            print(f"ElevenLabs exception: {e}")
-            node['audio_bytes'] = None
+        else:
+            url = f"https://api.runpod.ai/v2/{runpod_endpoint}/runsync"
+            headers = {
+                "Authorization": f"Bearer {runpod_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "input": {
+                    "text": clean_dialogue,
+                    "voice": kokoro_voice,
+                    "speed": 1.0
+                }
+            }
+            import requests
+            import base64
+            import time
+            r = requests.post(url, headers=headers, json=payload)
+            if r.status_code == 200:
+                data = r.json()
+                
+                # Handle async polling if it was pushed to queue (like during cold start)
+                job_id = data.get('id')
+                while data.get('status') in ['IN_QUEUE', 'IN_PROGRESS']:
+                    time.sleep(2)
+                    status_url = f"https://api.runpod.ai/v2/{runpod_endpoint}/status/{job_id}"
+                    r_status = requests.get(status_url, headers=headers)
+                    if r_status.status_code == 200:
+                        data = r_status.json()
+                    else:
+                        break
 
-    else:
-        print(f"[-] Unsupported voice format: {voice}. Defaulting to Kokoro af_bella.")
-        node['voice'] = "kokoro_af_bella"
-        return await generate_voice(node)
+                if data.get('status') == 'COMPLETED':
+                    audio_base64 = data['output']['audio_base64']
+                    node['audio_bytes'] = base64.b64decode(audio_base64)
+                else:
+                    print("RunPod Serverless error:", data)
+                    node['audio_bytes'] = None
+            else:
+                print("RunPod API error:", r.status_code, r.text)
+                node['audio_bytes'] = None
+    except Exception as e:
+        print(f"Kokoro RunPod exception: {e}")
+        node['audio_bytes'] = None
         
     return node
 
@@ -670,6 +549,12 @@ async def regenerate_reel_scene_chunk(scene):
     audio_bytes = node.get('audio_bytes')
     
     if audio_bytes:
+        import os
+        os.makedirs("local_cache/assets/audio", exist_ok=True)
+        local_path = f"local_cache/assets/audio/chunk_{scene['id']}.mp3"
+        with open(local_path, "wb") as f:
+            f.write(audio_bytes)
+            
         storage_path = f"audio/chunk_{scene['id']}.mp3"
         supabase.storage.from_("media").upload(storage_path, audio_bytes, {"content-type": "audio/mpeg", "upsert": "true"})
         public_url = supabase.storage.from_("media").get_public_url(storage_path)
