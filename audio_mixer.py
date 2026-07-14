@@ -223,6 +223,7 @@ async def generate_voice(node):
                 for tts_model in tts_models:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{tts_model}:generateContent?key={key}"
                     print(f"     -> Trying model: {tts_model}...")
+                    import requests
                     r = requests.post(url, json=data)
                     if r.status_code == 200:
                         resp = r.json()
@@ -365,8 +366,9 @@ async def generate_voice(node):
             node['audio_bytes'] = None
 
     else:
-        print(f"[-] Unsupported voice format: {voice}. No TTS engine matched.")
-        node['audio_bytes'] = None
+        print(f"[-] Unsupported voice format: {voice}. Defaulting to Kokoro af_bella.")
+        node['voice'] = "kokoro_af_bella"
+        return await generate_voice(node)
         
     return node
 
