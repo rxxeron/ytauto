@@ -602,9 +602,43 @@ export default function ReelAssetsView({ reelId, onBack }) {
                         </div>
                       </div>
 
-                      <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: 'var(--text-muted)' }}>
-                        "{scene.dialogue}"
-                      </p>
+                      {/* Script Dialogue Editing */}
+                      <div style={{ marginBottom: '10px' }}>
+                        <textarea
+                          defaultValue={scene.dialogue}
+                          onBlur={async (e) => {
+                            const newText = e.target.value;
+                            if (newText !== scene.dialogue) {
+                              await supabase.from('reel_scenes').update({ dialogue: newText }).eq('id', scene.id);
+                            }
+                          }}
+                          rows={2}
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            borderRadius: '6px',
+                            background: 'rgba(0,0,0,0.3)',
+                            color: 'white',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            fontSize: '13px',
+                            resize: 'vertical'
+                          }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+                          <button
+                            onClick={async () => {
+                              // Delete old scene audio and trigger fresh generation
+                              await supabase.from('reel_scenes').update({ audio_url: null, status: 'regenerating_audio' }).eq('id', scene.id);
+                              await supabase.from('reels').update({ master_audio_url: null }).eq('id', reelId);
+                              fetchData();
+                            }}
+                            className="btn-secondary"
+                            style={{ padding: '4px 10px', fontSize: '11px', color: '#8b5cf6', borderColor: 'rgba(139,92,246,0.3)' }}
+                          >
+                            🔄 Regenerate Scene Audio
+                          </button>
+                        </div>
+                      </div>
 
                       {scene.audio_url && (
                         <audio controls src={scene.audio_url} style={{ width: '100%', height: '28px', opacity: 0.8, marginBottom: '8px' }} />
