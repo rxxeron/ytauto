@@ -46,6 +46,6 @@ jobs:
             echo "[+] Restarting ai_orchestrator.py daemon..."
             pkill -9 -f "ai_orchestrator.py" || true
             sleep 1
-            nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 < /dev/null &
+            (nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 </dev/null &)
 
             echo "[+] Auto Deploy completed successfully!"
