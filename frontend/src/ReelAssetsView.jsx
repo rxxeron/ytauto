@@ -179,20 +179,20 @@ export default function ReelAssetsView({ reelId, onBack }) {
           </div>
         )}
 
+        {/* Compile Full Stitched Movie Button */}
+        <button 
+          className="btn-primary" 
+          style={{ padding: '10px 20px', fontWeight: 'bold', background: '#6366f1', borderColor: '#6366f1', display: 'flex', alignItems: 'center', gap: '8px' }}
+          onClick={async () => {
+            await supabase.from('reels').update({ status: 'compiling_video', final_video_url: null }).eq('id', reelId);
+            setReel({...reel, status: 'compiling_video', final_video_url: null});
+          }}
+        >
+          🎬 Compile & Export Final Video
+        </button>
+
         {['audio_ready', 'completed', 'error'].includes(reel.status) && (
           <div style={{ display: 'flex', gap: '12px' }}>
-            {reel.reel_type !== 'sleep' && (
-              <button 
-                className="btn-primary" 
-                style={{ padding: '10px 20px', fontWeight: 'bold', background: '#10b981', borderColor: '#10b981' }}
-                onClick={async () => {
-                  await supabase.from('reels').update({ status: 'compiling_video', final_video_url: null }).eq('id', reelId);
-                  setReel({...reel, status: 'compiling_video', final_video_url: null});
-                }}
-              >
-                {reel.status === 'completed' ? 'Regenerate Final Mix' : 'Generate Final Mix'}
-              </button>
-            )}
             <button 
               className="btn-secondary" 
               style={{ padding: '10px 20px', fontWeight: 'bold', background: '#6366f1', borderColor: '#818cf8', color: 'white' }}
