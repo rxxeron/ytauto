@@ -179,7 +179,25 @@ export default function ReelAssetsView({ reelId, onBack }) {
           </div>
         )}
 
-        {/* Compile Full Stitched Movie Button */}
+        {/* Regenerate All Audios & Compile Buttons */}
+        <button 
+          className="btn-primary" 
+          style={{ padding: '10px 20px', fontWeight: 'bold', background: '#8b5cf6', borderColor: '#8b5cf6', display: 'flex', alignItems: 'center', gap: '8px' }}
+          onClick={async () => {
+            if (window.confirm("Delete all old audio narration files and generate fresh voice narration for all scenes?")) {
+              const { data: scs } = await supabase.from('reel_scenes').select('id').eq('reel_id', reelId);
+              if (scs) {
+                const ids = scs.map(s => s.id);
+                await supabase.from('reel_scenes').update({ audio_url: null, status: 'regenerating_audio' }).in('id', ids);
+              }
+              await supabase.from('reels').update({ master_audio_url: null, status: 'generating_audio' }).eq('id', reelId);
+              fetchData();
+            }
+          }}
+        >
+          🎙️ Regenerate All Audios
+        </button>
+
         <button 
           className="btn-primary" 
           style={{ padding: '10px 20px', fontWeight: 'bold', background: '#6366f1', borderColor: '#6366f1', display: 'flex', alignItems: 'center', gap: '8px' }}
