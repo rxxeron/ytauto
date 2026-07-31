@@ -146,6 +146,19 @@ import wave
 import io
 import base64
 
+
+def load_audio_segment(path):
+    import os
+    from pydub import AudioSegment
+    if not os.path.exists(path) or os.path.getsize(path) < 100:
+        raise Exception(f"File too small or missing: {path}")
+    with open(path, "rb") as f:
+        header = f.read(4)
+    if header == b"RIFF":
+        return AudioSegment.from_file(path, format="wav")
+    else:
+        return AudioSegment.from_file(path)
+
 def pcm_to_mp3_bytes(pcm_bytes, sample_rate=24000, num_channels=1, sampwidth=2):
     wav_io = io.BytesIO()
     with wave.open(wav_io, 'wb') as wav_file:
@@ -160,8 +173,12 @@ def pcm_to_mp3_bytes(pcm_bytes, sample_rate=24000, num_channels=1, sampwidth=2):
     seg.export(mp3_io, format="mp3")
     return mp3_io.getvalue()
 
+import aiohttp
+sem = asyncio.Semaphore(5)
+
 async def generate_voice(node):
-    ntype = node.get("type")
+    async with sem:
+        ntype = node.get("type")
     if ntype != "voice":
         return node
         
@@ -225,17 +242,21 @@ async def generate_voice(node):
                 "response_format": "mp3",
                 "speed": speed
             }
-            import requests
-            r = requests.post(url, headers=headers, json=payload)
-            if r.status_code == 200:
-                if 'application/json' in r.headers.get('Content-Type', '') or r.content.startswith(b'{'):
-                    print("RunPod FastAPI logic error (returned JSON instead of MP3):", r.text)
-                    node['audio_bytes'] = None
-                else:
-                    node['audio_bytes'] = r.content
-            else:
-                print("RunPod FastAPI error:", r.status_code, r.text)
-                node['audio_bytes'] = None
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload) as r:
+                    if r.status == 200:
+                        content_type = r.headers.get('Content-Type', '')
+                        content = await r.read()
+                        if 'application/json' in content_type or content.startswith(b'{'):
+                            print("RunPod FastAPI logic error (returned JSON instead of MP3):", content.decode('utf-8'))
+                            node['audio_bytes'] = None
+                        else:
+                            node['audio_bytes'] = content
+                    else:
+                        text = await r.text()
+                        print("RunPod FastAPI error:", r.status, text)
+                        node['audio_bytes'] = None
         else:
             url = f"https://api.runpod.ai/v2/{runpod_endpoint}/runsync"
             headers = {
@@ -246,36 +267,51 @@ async def generate_voice(node):
                 "input": {
                     "text": clean_dialogue,
                     "voice": kokoro_voice,
-                    "speed": 1.0
+                    "speed": speed
                 }
             }
-            import requests
+            import aiohttp
             import base64
-            import time
-            r = requests.post(url, headers=headers, json=payload)
-            if r.status_code == 200:
-                data = r.json()
-                
-                # Handle async polling if it was pushed to queue (like during cold start)
-                job_id = data.get('id')
-                while data.get('status') in ['IN_QUEUE', 'IN_PROGRESS']:
-                    time.sleep(2)
-                    status_url = f"https://api.runpod.ai/v2/{runpod_endpoint}/status/{job_id}"
-                    r_status = requests.get(status_url, headers=headers)
-                    if r_status.status_code == 200:
-                        data = r_status.json()
+            import asyncio
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        job_id = data.get('id')
+                        while data.get('status') in ['IN_QUEUE', 'IN_PROGRESS']:
+                            await asyncio.sleep(2)
+                            status_url = f"https://api.runpod.ai/v2/{runpod_endpoint}/status/{job_id}"
+                            async with session.get(status_url, headers=headers) as r_status:
+                                if r_status.status == 200:
+                                    data = await r_status.json()
+                                else:
+                                    break
+                                    
+                        if data.get('status') == 'COMPLETED':
+                            audio_base64 = data.get('output', {}).get('audio_base64', '')
+                            if not audio_base64 and 'output' in data and isinstance(data['output'], str):
+                                out_str = data['output']
+                                if "," in out_str[:100]: out_str = out_str.split(",")[1]
+                                audio_base64 = out_str
+                                
+                            raw_bytes = base64.b64decode(audio_base64)
+                            if raw_bytes.startswith(b'RIFF'):
+                                import io
+                                from pydub import AudioSegment
+                                wav_io = io.BytesIO(raw_bytes)
+                                seg = AudioSegment.from_file(wav_io, format="wav")
+                                mp3_io = io.BytesIO()
+                                seg.export(mp3_io, format="mp3")
+                                node['audio_bytes'] = mp3_io.getvalue()
+                            else:
+                                node['audio_bytes'] = raw_bytes
+                        else:
+                            print("RunPod Serverless error:", data)
+                            node['audio_bytes'] = None
                     else:
-                        break
-
-                if data.get('status') == 'COMPLETED':
-                    audio_base64 = data['output']['audio_base64']
-                    node['audio_bytes'] = base64.b64decode(audio_base64)
-                else:
-                    print("RunPod Serverless error:", data)
-                    node['audio_bytes'] = None
-            else:
-                print("RunPod API error:", r.status_code, r.text)
-                node['audio_bytes'] = None
+                        text = await r.text()
+                        print("RunPod API error:", r.status, text)
+                        node['audio_bytes'] = None
     except Exception as e:
         print(f"Kokoro RunPod exception: {e}")
         node['audio_bytes'] = None
@@ -315,7 +351,7 @@ async def process_master_audio(ep_id):
                 temp_voice_path = f"temp_{ep_id}_{i}.mp3"
                 with open(temp_voice_path, "wb") as f:
                     f.write(audio_bytes)
-                segment = AudioSegment.from_mp3(temp_voice_path)
+                segment = load_audio_segment(temp_voice_path)
                 master_track += segment
                 os.remove(temp_voice_path)
 
@@ -415,13 +451,13 @@ async def process_reel_master_audio(reel_id):
                     # Update database so UI can show it instantly
                     supabase.table("reel_scenes").update({"audio_url": public_url, "status": "audio_ready"}).eq("id", scene_id).execute()
                     
-                    segment = AudioSegment.from_mp3(chunk_path)
+                    segment = load_audio_segment(chunk_path)
                 else:
                     # Fallback if no scene_id
                     temp_voice_path = f"temp_{reel_id}_{i}.mp3"
                     with open(temp_voice_path, "wb") as f:
                         f.write(audio_bytes)
-                    segment = AudioSegment.from_mp3(temp_voice_path)
+                    segment = load_audio_segment(temp_voice_path)
                     os.remove(temp_voice_path)
 
                 master_track += segment
@@ -481,9 +517,14 @@ async def process_reel_master_audio(reel_id):
             {"title": "Intense Thriller (Fallback)", "url": "https://www.youtube.com/watch?v=XvG2KbbD-i4", "duration": 150}
         ]
     
+    public_voice_url = upload_to_media_bucket(voice_path, f"audio/reel_{reel_id}_voice.mp3", "audio/mpeg")
+    import time
+    public_voice_url = f"{public_voice_url}?t={int(time.time())}"
+    
     supabase.table("reels").update({
         "status": "bgm_selection", 
-        "bgm_options": bgm_options
+        "bgm_options": bgm_options,
+        "master_audio_url": public_voice_url
     }).eq("id", reel_id).execute()
     print(f"[+] Voice Track successfully mixed. Waiting for BGM Selection.")
 
@@ -501,7 +542,7 @@ async def apply_bgm(reel_id):
         print("[-] Voice track not found!")
         return
         
-    master_track = AudioSegment.from_mp3(voice_path)
+    master_track = load_audio_segment(voice_path)
     
     selected_bgm = reel.get("selected_bgm")
     bgm_volume = float(reel.get("bgm_volume") or -6)
@@ -538,21 +579,25 @@ async def apply_bgm(reel_id):
                 "-x", "--audio-format", "mp3",
                 "-o", temp_bgm
             ]
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            await asyncio.to_thread(subprocess.run, cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
-            bgm = AudioSegment.from_mp3(temp_bgm)
-            if len(bgm) < len(master_track):
-                bgm = bgm * (len(master_track) // len(bgm) + 1)
-            bgm = bgm[:len(master_track)]
-            bgm = bgm + bgm_volume
-            bgm = bgm.fade_in(3500).fade_out(3500)
-            master_track = master_track.overlay(bgm)
+            def process_bgm(master_track, temp_bgm, bgm_volume):
+                bgm = load_audio_segment(temp_bgm)
+                if len(bgm) < len(master_track):
+                    bgm = bgm * (len(master_track) // len(bgm) + 1)
+                bgm = bgm[:len(master_track)]
+                bgm = bgm + bgm_volume
+                bgm = bgm.fade_in(3500).fade_out(3500)
+                master_track = master_track.overlay(bgm)
+                return master_track
+            
+            master_track = await asyncio.to_thread(process_bgm, master_track, temp_bgm, bgm_volume)
             if os.path.exists(temp_bgm):
                 os.remove(temp_bgm)
         except Exception as e:
             print(f"  [-] Failed to overlay BGM: {e}")
             
-    master_track.export(master_path, format="mp3")
+    await asyncio.to_thread(master_track.export, master_path, format="mp3")
     public_url = upload_to_media_bucket(master_path, f"audio/reel_{reel_id}_master.mp3", "audio/mpeg")
 
     reel_type = reel.get("reel_type", "standard")
@@ -630,7 +675,7 @@ async def rebuild_reel_master_voice(reel_id):
             
             if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 100:
                 try:
-                    segment = AudioSegment.from_mp3(chunk_path)
+                    segment = load_audio_segment(chunk_path)
                 except Exception as e:
                     print(f"Failed to read {chunk_path}: {e}")
                     continue
@@ -660,8 +705,17 @@ async def rebuild_reel_master_voice(reel_id):
     timing_path = f"local_cache/assets/audio/reel_{reel_id}_timing.json"
     with open(timing_path, "w") as f:
         json.dump(timing_map, f)
+        
+    public_voice_url = upload_to_media_bucket(voice_path, f"audio/reel_{reel_id}_voice.mp3", "audio/mpeg")
+    import time
+    public_voice_url = f"{public_voice_url}?t={int(time.time())}"
     
-    print(f"  -> Master voice track rebuilt.")
+    # Check if the reel is still in bgm_selection, if so, update master_audio_url
+    res_check = supabase.table("reels").select("status").eq("id", reel_id).single().execute()
+    if res_check.data and res_check.data.get("status") == "bgm_selection":
+        supabase.table("reels").update({"master_audio_url": public_voice_url}).eq("id", reel_id).execute()
+    
+    print(f"  -> Master voice track rebuilt and uploaded to {public_voice_url}.")
 
 if __name__ == "__main__":
     # Test script if run directly

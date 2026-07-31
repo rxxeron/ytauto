@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Play, ArrowLeft, Loader2, PlayCircle, Image as ImageIcon, Download, Check, Save } from 'lucide-react';
-
+import { Play, ArrowLeft, Loader2, PlayCircle, Image as ImageIcon, Download, Check, Save, Volume2 } from 'lucide-react';
 
 const getVideoId = (url) => {
   if (!url) return null;
@@ -32,6 +31,7 @@ export default function ReelAssetsView({ reelId, onBack }) {
   
   const [loadingRegen, setLoadingRegen] = useState({});
   const [previewLoading, setPreviewLoading] = useState({});
+  const [portionPage, setPortionPage] = useState(0);
 
   const handleVoicePreview = async (sceneId, voice) => {
     if (!voice) return;
@@ -73,6 +73,7 @@ export default function ReelAssetsView({ reelId, onBack }) {
   const [selectedBgmUrl, setSelectedBgmUrl] = useState('');
   const [bgmVolume, setBgmVolume] = useState(-6);
   const [bgmStart, setBgmStart] = useState('00:00');
+  const [searchQuery, setSearchQuery] = useState('');
   
   const [isLivePreviewing, setIsLivePreviewing] = useState(false);
   const masterAudioRef = useRef(null);
@@ -101,6 +102,14 @@ export default function ReelAssetsView({ reelId, onBack }) {
       </div>
     );
   }
+
+  const chunkSize = 4;
+  const portions = [];
+  for (let i = 0; i < scenes.length; i += chunkSize) {
+    portions.push(scenes.slice(i, i + chunkSize));
+  }
+  const totalPortionPages = Math.ceil(portions.length / 5);
+  const visiblePortions = portions.slice(portionPage * 5, (portionPage + 1) * 5);
 
   return (
     <div className="animate-fade-in" style={{ paddingBottom: '40px' }}>
@@ -267,6 +276,32 @@ export default function ReelAssetsView({ reelId, onBack }) {
             The AI has generated the voiceover! Now choose a background track to set the mood.
           </p>
           
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+            <input 
+              type="text" 
+              placeholder="Search YouTube for BGM (e.g. 1 hour sleep music)" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ flex: 1, padding: '8px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-light)', color: 'white', borderRadius: '4px' }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && searchQuery) {
+                  supabase.from('reels').update({ status: 'bgm_searching', error_message: searchQuery }).eq('id', reel.id).then(fetchData);
+                }
+              }}
+            />
+            <button 
+              className="btn-primary" 
+              onClick={async () => {
+                if (searchQuery) {
+                  await supabase.from('reels').update({ status: 'bgm_searching', error_message: searchQuery }).eq('id', reel.id);
+                  fetchData();
+                }
+              }}
+            >
+              Search
+            </button>
+          </div>
+          
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px', marginBottom: '24px' }}>
             {reel.bgm_options?.map((opt, i) => (
               <div 
@@ -383,9 +418,22 @@ export default function ReelAssetsView({ reelId, onBack }) {
       )}
 
       <div className="glass-panel" style={{ padding: '24px', marginBottom: '32px' }}>
-        <h3 style={{ margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <PlayCircle /> Master Audio Track
-        </h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <PlayCircle /> Master Audio Track
+          </h3>
+          <button 
+            className="btn-secondary" 
+            style={{ padding: '6px 12px', fontSize: '13px' }}
+            onClick={async () => {
+              await supabase.from('reels').update({ status: 'generating_audio' }).eq('id', reel.id);
+              fetchData();
+            }}
+            disabled={reel.status === 'generating_audio'}
+          >
+            {reel.status === 'generating_audio' ? 'Mixing...' : 'Force Regenerate'}
+          </button>
+        </div>
         {reel.master_audio_url || reel.status === 'bgm_selection' ? (
           <audio 
             ref={masterAudioRef}
@@ -399,6 +447,23 @@ export default function ReelAssetsView({ reelId, onBack }) {
           <div style={{ padding: '20px', background: 'rgba(0,0,0,0.2)', borderRadius: '12px', color: 'var(--text-muted)' }}>
             <p style={{ margin: 0 }}>Waiting to generate final audio mix...</p>
           </div>
+        ) : reel.status === 'error_audio' ? (
+          <div style={{ padding: '20px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ color: '#ef4444' }}>
+              <p style={{ margin: 0, fontWeight: 500 }}>Master Audio Track Generation Failed</p>
+              <p style={{ margin: '4px 0 0 0', fontSize: '13px', opacity: 0.8 }}>The AI orchestrator encountered an error while mixing. The corrupted audio chunks have likely been flagged.</p>
+            </div>
+            <button 
+              className="btn-primary" 
+              style={{ background: '#ef4444', borderColor: '#ef4444' }}
+              onClick={async () => {
+                await supabase.from('reels').update({ status: 'generating_audio' }).eq('id', reel.id);
+                fetchData();
+              }}
+            >
+              Retry Mixdown
+            </button>
+          </div>
         ) : (
           <div style={{ padding: '20px', background: 'rgba(0,0,0,0.2)', borderRadius: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '12px' }}>
             <Loader2 className="spin" size={20} />
@@ -409,7 +474,7 @@ export default function ReelAssetsView({ reelId, onBack }) {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
         <h3 style={{ margin: 0, fontSize: '20px' }}>
-          {reel.reel_type === 'sleep' ? 'Audio Chunks Breakdown' : 'Scene Breakdown & Wikimedia Images'}
+          Portion-Based Audio Breakdown ({portions.length} Portions)
         </h3>
         <button 
           className="btn-secondary"
@@ -427,7 +492,23 @@ export default function ReelAssetsView({ reelId, onBack }) {
           {scenes.some(s => s.status === 'regenerating_audio') ? 'Regenerating...' : 'Regenerate All Audio'}
         </button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+      {totalPortionPages > 1 && (
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
+          {Array.from({ length: totalPortionPages }).map((_, pIdx) => (
+            <button
+              key={pIdx}
+              onClick={() => setPortionPage(pIdx)}
+              className={portionPage === pIdx ? "btn-primary" : "btn-secondary"}
+              style={{ padding: '6px 14px', fontSize: '13px', borderRadius: '8px' }}
+            >
+              Portions {pIdx * 5 + 1}–{Math.min((pIdx + 1) * 5, portions.length)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {scenes.length === 0 ? (
           reel.status === 'approved' ? (
             <div className="glass-panel" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -444,373 +525,96 @@ export default function ReelAssetsView({ reelId, onBack }) {
             </div>
           )
         ) : (
-          scenes.map(scene => (
-            <div key={scene.id} className="glass-panel" style={{ display: 'flex', gap: '24px', padding: '24px' }}>
-              {reel.reel_type !== 'sleep' && (
-                <div style={{ flex: '0 0 200px', opacity: scene.is_hidden ? 0.3 : 1, transition: 'opacity 0.2s' }}>
-                  <div style={{ 
-                    width: '200px', 
-                    height: '200px', 
-                    background: 'rgba(0,0,0,0.3)', 
-                    borderRadius: '12px', 
-                    overflow: 'hidden',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    border: '1px solid var(--border-light)'
-                  }}>
-                    {scene.image_url ? (
-                      scene.image_url.match(/\.(mp4|webm|mov)$/i) ? (
-                        <video src={scene.image_url} controls muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        <img src={scene.image_url} alt="Wikimedia/Pixabay Asset" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      )
-                    ) : scene.status === 'pending' ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'var(--text-muted)', gap: '8px' }}>
-                        <span style={{ fontSize: '12px' }}>Waiting...</span>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'var(--text-muted)', gap: '8px' }}>
-                        <Loader2 className="spin" size={24} />
-                        <span style={{ fontSize: '12px' }}>Fetching image...</span>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Media Options Gallery */}
-                  {scene.media_options && scene.media_options.length > 0 && (
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
-                      {scene.media_options.map((opt, i) => (
-                        <div 
-                          key={i} 
-                          onClick={async () => {
-                            await supabase.from('reel_scenes').update({ image_url: opt }).eq('id', scene.id);
-                            fetchData();
-                          }}
-                          style={{ 
-                            width: '48px', height: '48px', background: 'rgba(0,0,0,0.5)', borderRadius: '6px', cursor: 'pointer', overflow: 'hidden',
-                            border: scene.image_url === opt ? '2px solid var(--accent-primary)' : '1px solid rgba(255,255,255,0.1)',
-                            flexShrink: 0
-                          }}
-                          title="Click to select this asset"
-                        >
-                          {opt.match(/\.(mp4|webm|mov)$/i) ? (
-                            <video src={opt} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          ) : (
-                            <img src={opt} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <h4 style={{ margin: 0, fontSize: '18px', color: scene.is_hidden ? 'var(--text-muted)' : 'var(--accent-primary)' }}>
-                    Scene {scene.scene_number} {scene.is_hidden && '(Opted Out)'}
-                  </h4>
-                  
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', color: scene.is_hidden ? '#ef4444' : 'var(--text-muted)' }}>
-                      <input 
-                        type="checkbox" 
-                        checked={scene.is_hidden || false} 
-                        onChange={async (e) => {
-                          await supabase.from('reel_scenes').update({ is_hidden: e.target.checked }).eq('id', scene.id);
-                          fetchData();
-                        }}
-                      />
-                      Opt-Out (Extend Prev Clip)
-                    </label>
-                    <span style={{ fontSize: '12px', color: scene.status === 'error' ? '#ef4444' : 'var(--text-muted)', background: scene.status === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px' }}>
-                      Status: {scene.status}
+          visiblePortions.map((portion, vIdx) => {
+            const portionIndex = portionPage * 5 + vIdx;
+            const scenesCount = portion.length;
+            const isPortionRegenerating = portion.some(s => s.status === 'regenerating_audio');
+
+            return (
+              <div key={portionIndex} className="glass-panel" style={{ padding: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px' }}>
+                  <h3 style={{ margin: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Volume2 color="#8b5cf6" size={20} /> Portion {portionIndex + 1}
+                  </h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: '4px' }}>
+                      Covers {scenesCount} audio scenes
                     </span>
-                  </div>
-                  {scene.status === 'error' && scene.error_message && (
-                    <div style={{ marginTop: '12px', padding: '8px 12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '6px', color: '#fca5a5', fontSize: '13px', fontFamily: 'monospace' }}>
-                      <strong>Error:</strong> {scene.error_message}
-                    </div>
-                  )}
-                </div>
-                
-                {reel.reel_type !== 'sleep' && (
-                  <div style={{ display: 'flex', gap: '12px' }}>
-                    {/* Search Query */}
-                    <div style={{ flex: 2, background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', borderLeft: '3px solid #3b82f6' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px' }}>Search Query</p>
-                        <button 
-                          className="btn-secondary" 
-                          style={{ padding: '4px 12px', fontSize: '12px', background: 'rgba(59, 130, 246, 0.2)', borderColor: '#3b82f6', color: '#60a5fa' }}
-                          onClick={async () => {
-                            await supabase.from('reel_scenes').update({ status: 'generating_video', image_url: null }).eq('id', scene.id);
-                            fetchData();
-                          }}
-                        >
-                          Refetch Asset
-                        </button>
-                      </div>
-                      <input 
-                        type="text" 
-                        value={scene.search_query || ''} 
-                        onChange={async (e) => {
-                          await supabase.from('reel_scenes').update({ search_query: e.target.value }).eq('id', scene.id);
-                          fetchData();
-                        }}
-                        style={{ 
-                          width: '100%', 
-                          background: 'transparent', 
-                          border: 'none', 
-                          color: '#e5e7eb', 
-                          fontSize: '15px', 
-                          outline: 'none',
-                          borderBottom: '1px dashed rgba(255,255,255,0.2)',
-                          paddingBottom: '4px'
-                        }} 
-                      />
-                    </div>
-
-                    {/* Trimming */}
-                    <div style={{ flex: 1, background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', borderLeft: '3px solid #10b981' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px' }}>Video Trimming</p>
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Start Time (s)</label>
-                          <input 
-                            type="number" 
-                            step="0.1"
-                            min="0"
-                            placeholder="0.0"
-                            value={scene.trim_start !== undefined ? scene.trim_start : ''} 
-                            onChange={async (e) => {
-                              const val = e.target.value ? parseFloat(e.target.value) : 0;
-                              await supabase.from('reel_scenes').update({ trim_start: val }).eq('id', scene.id);
-                              fetchData();
-                            }}
-                            style={{ 
-                              width: '100%', 
-                              background: 'rgba(255,255,255,0.05)', 
-                              border: '1px solid var(--border-light)', 
-                              color: 'white', 
-                              fontSize: '14px',
-                              padding: '6px',
-                              borderRadius: '4px',
-                              outline: 'none'
-                            }} 
-                          />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Duration (s)</label>
-                          <input 
-                            type="number" 
-                            step="0.1"
-                            min="0"
-                            placeholder="Auto"
-                            value={scene.trim_end !== undefined && scene.trim_end !== null ? scene.trim_end : ''} 
-                            onChange={async (e) => {
-                              const val = e.target.value ? parseFloat(e.target.value) : null;
-                              await supabase.from('reel_scenes').update({ trim_end: val }).eq('id', scene.id);
-                              fetchData();
-                            }}
-                            style={{ 
-                              width: '100%', 
-                              background: 'rgba(255,255,255,0.05)', 
-                              border: '1px solid var(--border-light)', 
-                              color: 'white', 
-                              fontSize: '14px',
-                              padding: '6px',
-                              borderRadius: '4px',
-                              outline: 'none'
-                            }} 
-                          />
-                        </div>
-                      </div>
-                      <p style={{ margin: '6px 0 0 0', fontSize: '10px', color: 'var(--text-muted)' }}>
-                        *Leave Duration blank to auto-sync perfectly with dialogue.
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {scene.dialogue && (
-                  <div style={{ background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                      <p style={{ margin: '0', fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px' }}>Dialogue</p>
-                      
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Voice:</span>
-                        <select 
-                          value={scene.voice || 'kokoro_af_bella'}
-                          onChange={async (e) => {
-                            await supabase.from('reel_scenes').update({ voice: e.target.value }).eq('id', scene.id);
-                            fetchData();
-                          }}
-                          className="input-field"
-                          style={{ 
-                            background: '#1e1e2d', 
-                            border: '1px solid var(--border-light)', 
-                            color: 'white',
-                            padding: '4px 8px',
-                            fontSize: '12px',
-                            cursor: 'pointer',
-                            maxWidth: '200px'
-                          }}
-                        >
-                         <optgroup label="🇺🇸 American English">
-                            <option value="kokoro_af_heart">af_heart (Female, A)</option>
-                            <option value="kokoro_af_alloy">af_alloy (Female, C)</option>
-                            <option value="kokoro_af_aoede">af_aoede (Female, C+)</option>
-                            <option value="kokoro_af_bella">af_bella (Female, A-)</option>
-                            <option value="kokoro_af_jessica">af_jessica (Female, D)</option>
-                            <option value="kokoro_af_kore">af_kore (Female, C+)</option>
-                            <option value="kokoro_af_nicole">af_nicole (Female, B-)</option>
-                            <option value="kokoro_af_nova">af_nova (Female, C)</option>
-                            <option value="kokoro_af_river">af_river (Female, D)</option>
-                            <option value="kokoro_af_sarah">af_sarah (Female, C+)</option>
-                            <option value="kokoro_af_sky">af_sky (Female, C-)</option>
-                            <option value="kokoro_am_adam">am_adam (Male, F+)</option>
-                            <option value="kokoro_am_echo">am_echo (Male, D)</option>
-                            <option value="kokoro_am_eric">am_eric (Male, D)</option>
-                            <option value="kokoro_am_fenrir">am_fenrir (Male, C+)</option>
-                            <option value="kokoro_am_liam">am_liam (Male, D)</option>
-                            <option value="kokoro_am_michael">am_michael (Male, C+)</option>
-                            <option value="kokoro_am_onyx">am_onyx (Male, D)</option>
-                            <option value="kokoro_am_puck">am_puck (Male, C+)</option>
-                            <option value="kokoro_am_santa">am_santa (Male, D-)</option>
-                        </optgroup>
-                        <optgroup label="🇬🇧 British English">
-                            <option value="kokoro_bf_alice">bf_alice (Female, D)</option>
-                            <option value="kokoro_bf_emma">bf_emma (Female, B-)</option>
-                            <option value="kokoro_bf_isabella">bf_isabella (Female, C)</option>
-                            <option value="kokoro_bf_lily">bf_lily (Female, D)</option>
-                            <option value="kokoro_bm_daniel">bm_daniel (Male, D)</option>
-                            <option value="kokoro_bm_fable">bm_fable (Male, C)</option>
-                            <option value="kokoro_bm_george">bm_george (Male, C)</option>
-                            <option value="kokoro_bm_lewis">bm_lewis (Male, D+)</option>
-                        </optgroup>
-                        <optgroup label="🇪🇸 Spanish">
-                            <option value="kokoro_ef_dora">ef_dora (Female)</option>
-                            <option value="kokoro_em_alex">em_alex (Male)</option>
-                            <option value="kokoro_em_santa">em_santa (Male)</option>
-                        </optgroup>
-                        <optgroup label="🇫🇷 French">
-                            <option value="kokoro_ff_siwis">ff_siwis (Female, B-)</option>
-                        </optgroup>
-                        <optgroup label="🇮🇹 Italian">
-                            <option value="kokoro_if_sara">if_sara (Female, C)</option>
-                            <option value="kokoro_im_nicola">im_nicola (Male, C)</option>
-                        </optgroup>
-                        <optgroup label="🇧🇷 Brazilian Portuguese">
-                            <option value="kokoro_pf_dora">pf_dora (Female)</option>
-                            <option value="kokoro_pm_alex">pm_alex (Male)</option>
-                            <option value="kokoro_pm_santa">pm_santa (Male)</option>
-                        </optgroup>
-                        <optgroup label="🇯🇵 Japanese">
-                            <option value="kokoro_jf_alpha">jf_alpha (Female, C+)</option>
-                            <option value="kokoro_jf_gongitsune">jf_gongitsune (Female, C)</option>
-                            <option value="kokoro_jf_nezumi">jf_nezumi (Female, C-)</option>
-                            <option value="kokoro_jf_tebukuro">jf_tebukuro (Female, C)</option>
-                            <option value="kokoro_jm_kumo">jm_kumo (Male, C-)</option>
-                        </optgroup>
-                        <optgroup label="🇨🇳 Mandarin Chinese">
-                            <option value="kokoro_zf_xiaobei">zf_xiaobei (Female, D)</option>
-                            <option value="kokoro_zf_xiaoni">zf_xiaoni (Female, D)</option>
-                            <option value="kokoro_zf_xiaoxiao">zf_xiaoxiao (Female, D)</option>
-                            <option value="kokoro_zf_xiaoyi">zf_xiaoyi (Female, D)</option>
-                            <option value="kokoro_zm_yunjian">zm_yunjian (Male, D)</option>
-                            <option value="kokoro_zm_yunxi">zm_yunxi (Male, D)</option>
-                            <option value="kokoro_zm_yunxia">zm_yunxia (Male, D)</option>
-                            <option value="kokoro_zm_yunyang">zm_yunyang (Male, D)</option>
-                        </optgroup>
-                        <optgroup label="🇮🇳 Hindi">
-                            <option value="kokoro_hf_alpha">hf_alpha (Female, C)</option>
-                            <option value="kokoro_hf_beta">hf_beta (Female, C)</option>
-                            <option value="kokoro_hm_omega">hm_omega (Male, C)</option>
-                            <option value="kokoro_hm_psi">hm_psi (Male, C)</option>
-                        </optgroup>
-                        </select>
-                        
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '12px' }}>Speed:</span>
-                        <select 
-                          value={scene.speed || 1.0}
-                          onChange={async (e) => {
-                            await supabase.from('reel_scenes').update({ speed: parseFloat(e.target.value) }).eq('id', scene.id);
-                            fetchData();
-                          }}
-                          className="input-field"
-                          style={{ 
-                            background: '#1e1e2d', 
-                            border: '1px solid var(--border-light)', 
-                            color: 'white',
-                            padding: '4px 8px',
-                            fontSize: '12px',
-                            cursor: 'pointer',
-                            maxWidth: '100px'
-                          }}
-                        >
-                          <option value={0.7}>0.7x (Very Slow)</option>
-                          <option value={0.85}>0.85x (Slow)</option>
-                          <option value={1.0}>1.0x (Default)</option>
-                          <option value={1.15}>1.15x (Fast)</option>
-                          <option value={1.3}>1.3x (Very Fast)</option>
-                          <option value={1.5}>1.5x (Speedreader)</option>
-                        </select>
-                        <button
-                          onClick={() => handleVoicePreview(scene.id, scene.voice || 'kokoro_af_bella')}
-                          disabled={previewLoading[scene.id]}
-                          className="btn-secondary"
-                          style={{ padding: '4px 8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        >
-                          <Play size={12} />
-                          {previewLoading[scene.id] ? 'Loading...' : 'Listen'}
-                        </button>
-                      </div>
-                    </div>
-                    <p style={{ margin: '0 0 12px 0', fontSize: '14px', color: 'var(--text-muted)', fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
-                      <strong style={{ color: 'white', marginRight: '4px' }}>{scene.character_name}:</strong> 
-                      "{scene.dialogue}"
-                    </p>
-                    
-                    {scene.audio_url && (
-                      <div style={{ marginTop: '8px' }}>
-                        <audio controls src={scene.audio_url} style={{ width: '100%', height: '32px' }} />
-                      </div>
-                    )}
-                    
-                    <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                      {scene.status === 'regenerating_audio' ? (
-                        <button
-                          className="btn-danger"
-                          onClick={async () => {
-                            await supabase.from('reel_scenes').update({ status: 'completed' }).eq('id', scene.id);
-                            fetchData();
-                          }}
-                          style={{ padding: '6px 12px', fontSize: '12px', whiteSpace: 'nowrap', background: 'rgba(255, 68, 68, 0.2)', color: '#ff4444', border: '1px solid #ff4444' }}
-                        >
-                          Cancel
-                        </button>
-                      ) : (
-                        <button
-                          className="btn-secondary"
-                          onClick={async () => {
+                    <button
+                      className="btn-primary"
+                      onClick={async () => {
+                        for (const scene of portion) {
+                          if (scene.dialogue && scene.dialogue.trim().length > 0) {
                             await supabase.from('reel_scenes').update({ status: 'regenerating_audio' }).eq('id', scene.id);
-                            fetchData();
-                          }}
-                          style={{ padding: '6px 12px', fontSize: '12px', whiteSpace: 'nowrap' }}
-                        >
-                          {scene.audio_url ? 'Regenerate Audio' : 'Generate Audio'}
-                        </button>
+                          }
+                        }
+                        fetchData();
+                      }}
+                      style={{ padding: '6px 12px', fontSize: '12px', whiteSpace: 'nowrap', background: '#8b5cf6', borderColor: '#8b5cf6' }}
+                      disabled={isPortionRegenerating}
+                    >
+                      {isPortionRegenerating ? 'Generating Audio...' : portion.some(s => s.audio_url) ? 'Regenerate Audio for Portion' : 'Generate Audio for Portion'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Script & Voice controls inside this Portion */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {portion.map((scene) => (
+                    <div key={scene.id} style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--accent-primary)' }}>
+                          Scene #{scene.scene_number} ({scene.character_name || 'Narrator'})
+                        </span>
+                        
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <select 
+                            value={scene.voice || 'kokoro_af_bella'}
+                            onChange={async (e) => {
+                              await supabase.from('reel_scenes').update({ voice: e.target.value }).eq('id', scene.id);
+                              fetchData();
+                            }}
+                            style={{ padding: '4px 8px', fontSize: '12px', borderRadius: '6px', background: 'rgba(0,0,0,0.3)', color: 'white', border: '1px solid rgba(255,255,255,0.1)' }}
+                          >
+                            <optgroup label="🇺🇸 American English">
+                              <option value="kokoro_af_heart">af_heart (Female, S)</option>
+                              <option value="kokoro_af_bella">af_bella (Female, A-)</option>
+                              <option value="kokoro_af_nicole">af_nicole (Female, B)</option>
+                              <option value="kokoro_af_sky">af_sky (Female, B-)</option>
+                              <option value="kokoro_am_adam">am_adam (Male, D)</option>
+                              <option value="kokoro_am_michael">am_michael (Male, B+)</option>
+                            </optgroup>
+                            <optgroup label="🇬🇧 British English">
+                              <option value="kokoro_bf_emma">bf_emma (Female, B-)</option>
+                              <option value="kokoro_bm_george">bm_george (Male, C)</option>
+                            </optgroup>
+                          </select>
+
+                          <button
+                            onClick={() => handleVoicePreview(scene.id, scene.voice || 'kokoro_af_bella')}
+                            disabled={previewLoading[scene.id]}
+                            className="btn-secondary"
+                            style={{ padding: '4px 8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            <Play size={12} />
+                            {previewLoading[scene.id] ? 'Loading...' : 'Listen'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: 'var(--text-muted)' }}>
+                        "{scene.dialogue}"
+                      </p>
+
+                      {scene.audio_url && (
+                        <audio controls src={scene.audio_url} style={{ width: '100%', height: '28px', opacity: 0.8 }} />
                       )}
                     </div>
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

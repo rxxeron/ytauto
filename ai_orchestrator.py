@@ -878,11 +878,11 @@ async def generate_scene_audio(scene):
             
     print(f"  -> Generating Kokoro audio via RunPod for {voice}: '{dialogue[:30]}...'")
     
-    runpod_key = os.getenv("RUNPOD_API_KEY")
+    runpod_key = os.getenv("RUNPOD_VIDEO_API_KEY")
     runpod_endpoint = os.getenv("RUNPOD_KOKORO_ENDPOINT_ID")
     
     if not runpod_endpoint or not runpod_key:
-        err = "Missing RUNPOD_KOKORO_ENDPOINT_ID or RUNPOD_API_KEY in .env"
+        err = "Missing RUNPOD_KOKORO_ENDPOINT_ID or RUNPOD_VIDEO_API_KEY in .env"
         print(f"[-] {err}")
         supabase.table("episode_scenes").update({"status": "error", "error_message": err}).eq("id", scene_id).execute()
         return
@@ -954,18 +954,86 @@ async def generate_scene_video(scene):
     prompt = scene.get('visual_prompt', '')
     print(f"\n[+] Generating Video for Scene {scene['scene_number']} (ID: {scene_id})")
     
-    # Placeholder for the generic Wan 2.6 endpoint
-    print(f"  -> Sending prompt to {WAN_API_URL}: {prompt[:50]}...")
+    # Text-to-Video generation using RunPod Serverless API
+    import os
+    import asyncio
+    import requests
+    import base64
+    
+    runpod_api_key = os.getenv("RUNPOD_VIDEO_API_KEY")
+    endpoint_id = os.getenv("RUNPOD_VIDEO_ENDPOINT_ID")
+    
+    print(f"  -> Sending prompt to RunPod Endpoint ({endpoint_id}): {prompt[:50]}...")
     
     try:
-        # Simulate video generation delay or make actual request
-        headers = {"Authorization": f"Bearer {WAN_API_KEY}"} if WAN_API_KEY else {}
-        # r = requests.post(WAN_API_URL, json={"prompt": prompt}, headers=headers)
-        # video_url = r.json().get("video_url")
+        url = f"https://api.runpod.ai/v2/{endpoint_id}/run"
+        headers = {
+            "Authorization": f"Bearer {runpod_api_key}",
+            "Content-Type": "application/json"
+        }
         
-        # MOCKING FOR NOW: Wait 3 seconds and just use a placeholder
-        await asyncio.sleep(3)
-        video_url = "https://www.w3schools.com/html/mov_bbb.mp4" # Placeholder
+        payload = {
+            "input": {
+                "prompt": prompt
+            }
+        }
+        response = requests.post(url, headers=headers, json=payload)
+        response_json = response.json()
+        job_id = response_json.get("id")
+        
+        if not job_id:
+            raise Exception(f"Failed to start RunPod job: {response.text}")
+            
+        print(f"  -> Video job created: {job_id}, polling for completion...")
+        
+        video_url = None
+        status_url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}"
+        
+        while True:
+            status_res = requests.get(status_url, headers=headers)
+            status_json = status_res.json()
+            status = status_json.get("status")
+            
+            if status == "COMPLETED":
+                output = status_json.get("output", {})
+                
+                out_str = None
+                if isinstance(output, str):
+                    out_str = output
+                elif isinstance(output, list) and len(output) > 0:
+                    out_str = output[0]
+                elif isinstance(output, dict):
+                    out_str = output.get("video_url") or output.get("url") or output.get("video") or output.get("output")
+                    
+                if out_str and out_str.startswith("http"):
+                    video_url = out_str
+                elif out_str and len(out_str) > 1000:
+                    # Likely base64, save it to local_cache
+                    import uuid
+                    os.makedirs("local_cache/assets/videos", exist_ok=True)
+                    video_filename = f"runpod_{uuid.uuid4().hex[:8]}.mp4"
+                    local_path = f"local_cache/assets/videos/{video_filename}"
+                    
+                    if "," in out_str[:100]:
+                        out_str = out_str.split(",")[1]
+                        
+                    with open(local_path, "wb") as f:
+                        f.write(base64.b64decode(out_str))
+                    
+                    video_url = local_path
+                else:
+                    video_url = str(output)
+                    
+                print(f"  -> Video job completed! URL/Path: {video_url[:100]}...")
+                break
+            elif status in ["FAILED", "ERROR"]:
+                err = status_json.get("error", "Unknown Error")
+                raise Exception(f"Job failed with error: {err}")
+            
+            await asyncio.sleep(5)
+            
+        if not video_url:
+            raise Exception("Job completed but no video URL was found.")
         
         # Update scene
         supabase.table("episode_scenes").update({"status": "video_ready", "video_url": video_url}).eq("id", scene_id).execute()
@@ -976,6 +1044,383 @@ async def generate_scene_video(scene):
         supabase.table("episode_scenes").update({"status": "error", "error_message": err}).eq("id", scene_id).execute()
 
 
+active_tasks = set()
+
+def get_task_key(task_type, item_id):
+    return f"{task_type}_{item_id}"
+
+async def run_in_background(task_key, coro):
+    try:
+        await coro
+    except Exception as e:
+        print(f"[-] Background task {task_key} failed: {e}")
+    finally:
+        active_tasks.discard(task_key)
+
+def dispatch_task(task_type, item_id, coro):
+    key = get_task_key(task_type, item_id)
+    if key not in active_tasks:
+        active_tasks.add(key)
+        asyncio.create_task(run_in_background(key, coro))
+    else:
+        coro.close()
+
+
+async def process_tts_job(job):
+    import audio_mixer
+    try:
+        print(f"\n[+] Processing TTS Job: {job['id']}")
+        node = {
+            "type": "voice",
+            "voice": job['voice_id'],
+            "dialogue": job['text_content']
+        }
+        node = await audio_mixer.generate_voice(node)
+        
+        if "audio_bytes" in node:
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
+                temp_file.write(node["audio_bytes"])
+                temp_file_path = temp_file.name
+            
+            try:
+                supabase_path = f"audio/tts_{job['id']}.mp3"
+                with open(temp_file_path, "rb") as f:
+                    supabase.storage.from_("media").upload(
+                        path=supabase_path,
+                        file=f,
+                        file_options={"content-type": "audio/mpeg"}
+                    )
+                
+                public_url = supabase.storage.from_("media").get_public_url(supabase_path)
+                supabase.table("tts_jobs").update({"status": "completed", "audio_url": public_url}).eq("id", job["id"]).execute()
+                print(f"  -> TTS Job Completed! URL: {public_url}")
+            finally:
+                os.remove(temp_file_path)
+        else:
+            raise Exception("Failed to generate audio bytes")
+    except Exception as e:
+        print(f"  -> TTS Job Error: {e}")
+        supabase.table("tts_jobs").update({"status": "error"}).eq("id", job["id"]).execute()
+
+async def process_tts_image_job(job):
+    try:
+        print(f"\n[+] Processing TTS Image Job: {job['id']}")
+        prompt_res = gemini_client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=f"You are a cinematic prompt engineer. Based on the following voiceover script, write a single concise 1-2 sentence image generation prompt for a highly detailed, cinematic photograph that perfectly captures the mood. Script: {job['text_content']}"
+        )
+        image_prompt = prompt_res.text.strip()
+        print(f"  -> Generated Image Prompt: {image_prompt}")
+        
+        import base64
+        response = together_client.images.generate(
+            prompt=image_prompt,
+            model="black-forest-labs/FLUX.1-schnell",
+            n=1,
+            response_format="b64_json"
+        )
+        
+        b64_img = response.data[0].b64_json
+        image_bytes = base64.b64decode(b64_img)
+        
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+            temp_file.write(image_bytes)
+            temp_file_path = temp_file.name
+        
+        try:
+            supabase_path = f"images/tts_{job['id']}.png"
+            with open(temp_file_path, "rb") as f:
+                supabase.storage.from_("media").upload(
+                    path=supabase_path,
+                    file=f,
+                    file_options={"content-type": "image/png"},
+                    upsert=True
+                )
+            
+            public_url = supabase.storage.from_("media").get_public_url(supabase_path)
+            supabase.table("tts_jobs").update({"status": "image_completed", "image_url": public_url, "image_prompt": image_prompt}).eq("id", job["id"]).execute()
+            print(f"  -> Image Job Completed! URL: {public_url}")
+        finally:
+            os.remove(temp_file_path)
+            
+    except Exception as e:
+        print(f"  -> Image Job Error: {e}")
+        supabase.table("tts_jobs").update({"status": "error"}).eq("id", job["id"]).execute()
+
+async def process_tts_video_job(job):
+    try:
+        print(f"\n[+] Processing TTS Video Job: {job['id']}")
+        
+        runpod_key = os.getenv("RUNPOD_VIDEO_API_KEY")
+        runpod_endpoint = os.getenv("RUNPOD_LTX_ENDPOINT_ID")
+        
+        if not runpod_key or not runpod_endpoint:
+            raise Exception("RUNPOD_VIDEO_API_KEY or RUNPOD_LTX_ENDPOINT_ID is missing from environment variables.")
+            
+        import requests
+        
+        url = f"https://api.runpod.ai/v2/{runpod_endpoint}/run"
+        headers = {
+            "Authorization": f"Bearer {runpod_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "input": {
+                "image_url": job["image_url"],
+                "prompt": job.get("image_prompt", "Cinematic motion, high quality")
+            }
+        }
+        
+        r = requests.post(url, headers=headers, json=payload)
+        if r.status_code == 200:
+            data = r.json()
+            job_id = data.get('id')
+            status = data.get('status')
+            
+            print(f"  -> RunPod LTX Video Job started: {job_id}")
+            
+            while status in ['IN_QUEUE', 'IN_PROGRESS']:
+                await asyncio.sleep(5)
+                poll_url = f"https://api.runpod.ai/v2/{runpod_endpoint}/status/{job_id}"
+                r_poll = requests.get(poll_url, headers=headers)
+                if r_poll.status_code == 200:
+                    data = r_poll.json()
+                    status = data.get('status')
+                    print(f"  -> RunPod LTX Video Job {job_id} is {status}...")
+                else:
+                    print(f"  -> Polling error: {r_poll.text}")
+                    break
+                    
+            if status == 'COMPLETED':
+                output = data.get('output', {})
+                video_url = output.get('video_url') or output.get('url') or (output.get('video') if isinstance(output.get('video'), str) else None)
+                
+                if video_url:
+                    supabase.table("tts_jobs").update({"status": "video_completed", "video_url": video_url}).eq("id", job["id"]).execute()
+                    print(f"  -> Video Job Completed! URL: {video_url}")
+                else:
+                    raise Exception(f"RunPod worker returned success but no video URL found in output: {output}")
+            else:
+                raise Exception(f"RunPod LTX Video generation failed: {data}")
+        else:
+            raise Exception(f"RunPod Error: {r.text}")
+            
+    except Exception as e:
+        print(f"  -> Video Job Error: {e}")
+        supabase.table("tts_jobs").update({"status": "error"}).eq("id", job["id"]).execute()
+
+async def process_reel_scene_image_job(scene):
+    try:
+        print(f"\n[+] Processing Reel Scene Image Job: {scene['id']}")
+        context_text = scene.get('visual_prompt_context') or scene.get('dialogue')
+        
+        width = 768
+        height = 1344
+        if "[AR: 16:9]" in context_text:
+            width = 1344
+            height = 768
+            context_text = context_text.replace("[AR: 16:9]", "").strip()
+        elif "[AR: 9:16]" in context_text:
+            width = 768
+            height = 1344
+            context_text = context_text.replace("[AR: 9:16]", "").strip()
+            
+        from openai import OpenAI
+        prompt_res = None
+        last_err = None
+        
+        for _ in range(max(1, len(groq_keys.keys))):
+            key = groq_keys.get_key()
+            try:
+                client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": f"You are a cinematic prompt engineer. Based on the following voiceover script segment, write a single concise 1-2 sentence image generation prompt for a highly detailed, cinematic photograph that perfectly captures the mood. Script: {context_text}"}]
+                )
+                prompt_res = response.choices[0].message.content
+                break
+            except Exception as e:
+                last_err = e
+        
+        if not prompt_res:
+            raise last_err
+            
+        image_prompt = prompt_res.strip()
+        print(f"  -> Generated Image Prompt: {image_prompt}")
+        print(f"  -> Resolution: {width}x{height}")
+        
+        import base64
+        response = together_client.images.generate(
+            prompt=image_prompt,
+            model="black-forest-labs/FLUX.1-schnell",
+            n=1,
+            width=width,
+            height=height,
+            response_format="b64_json"
+        )
+        b64_image = response.data[0].b64_json
+        image_bytes = base64.b64decode(b64_image)
+        supabase_path = f"images/reel_scene_{scene['id']}.png"
+        supabase.storage.from_("images").upload(
+            file=image_bytes,
+            path=supabase_path,
+            file_options={"content-type": "image/png", "upsert": "true"}
+        )
+        public_url = supabase.storage.from_("images").get_public_url(supabase_path)
+        
+        supabase.table("reel_scenes").update({"status": "image_completed", "image_url": public_url, "search_query": image_prompt}).eq("id", scene["id"]).execute()
+        print(f"  -> Uploaded Image to Supabase: {public_url}")
+    except Exception as e:
+        print(f"  -> Error generating reel scene image: {e}")
+        supabase.table("reel_scenes").update({"status": "error"}).eq("id", scene["id"]).execute()
+
+async def process_reel_scene_video_job(scene):
+    try:
+        print(f"\n[+] Processing Reel Scene Video Job (Image-to-Video): {scene['id']}")
+        import requests
+        import base64
+        import uuid
+        
+        runpod_api_key = os.getenv("RUNPOD_VIDEO_API_KEY")
+        endpoint_id = os.getenv("RUNPOD_VIDEO_ENDPOINT_ID")
+        
+        prompt = scene.get("search_query")
+        image_url = scene.get("image_url")
+        
+        if not prompt:
+            context_text = scene.get('visual_prompt_context') or scene.get('dialogue') or "Cinematic dream scene"
+            from openai import OpenAI
+            for _ in range(max(1, len(groq_keys.keys))):
+                key = groq_keys.get_key()
+                try:
+                    client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
+                    response = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {"role": "system", "content": "You are a cinematic prompt engineer. Output ONLY the raw visual prompt for video generation. Do NOT include intro text."},
+                            {"role": "user", "content": f"Script segment: {context_text}"}
+                        ]
+                    )
+                    prompt = response.choices[0].message.content
+                    break
+                except Exception as e: pass
+            if not prompt: prompt = "Cinematic slow motion, highly detailed, 4k"
+
+        print(f"  -> Sending prompt & asset to RunPod Endpoint ({endpoint_id})...")
+        
+        url = f"https://api.runpod.ai/v2/{endpoint_id}/run"
+        headers = {
+            "Authorization": f"Bearer {runpod_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        input_data = {"prompt": prompt}
+        if image_url: input_data["image_url"] = image_url
+
+        payload = { "input": input_data }
+        
+        r = requests.post(url, headers=headers, json=payload)
+        response_json = r.json()
+        job_id = response_json.get("id")
+        
+        if not job_id:
+            raise Exception(f"Failed to start RunPod job: {r.text}")
+            
+        print(f"  -> Video job created: {job_id}, polling for completion...")
+        
+        vid_url = None
+        status_url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}"
+        
+        while True:
+            status_res = requests.get(status_url, headers=headers)
+            status_json = status_res.json()
+            status = status_json.get("status")
+            
+            if status == "COMPLETED":
+                output = status_json.get("output", {})
+                
+                out_str = None
+                if isinstance(output, str):
+                    out_str = output
+                elif isinstance(output, list) and len(output) > 0:
+                    out_str = output[0]
+                elif isinstance(output, dict):
+                    out_str = output.get("video_url") or output.get("url") or output.get("video") or output.get("output")
+                    
+                if out_str and out_str.startswith("http"):
+                    vid_url = out_str
+                elif out_str and len(out_str) > 1000:
+                    os.makedirs("local_cache/assets/videos", exist_ok=True)
+                    video_filename = f"runpod_{uuid.uuid4().hex[:8]}.mp4"
+                    local_path = f"local_cache/assets/videos/{video_filename}"
+                    
+                    if "," in out_str[:100]:
+                        out_str = out_str.split(",")[1]
+                        
+                    with open(local_path, "wb") as f:
+                        f.write(base64.b64decode(out_str))
+                        
+                    try:
+                        supabase_path = f"videos/{video_filename}"
+                        with open(local_path, "rb") as f:
+                            supabase.storage.from_("media").upload(
+                                path=supabase_path,
+                                file=f,
+                                file_options={"content-type": "video/mp4"}
+                            )
+                        vid_url = supabase.storage.from_("media").get_public_url(supabase_path)
+                    except Exception as upload_err:
+                        print(f"  -> Failed to upload video to Supabase: {upload_err}")
+                        vid_url = local_path
+                else:
+                    vid_url = str(output)
+                    
+                break
+            elif status in ["FAILED", "ERROR"]:
+                err = status_json.get("error", "Unknown Error")
+                raise Exception(f"Job failed with error: {err}")
+                
+            await asyncio.sleep(5)
+            
+        if vid_url:
+            print(f"  -> Video Job Completed! URL/Path: {vid_url[:100]}...")
+            supabase.table("reel_scenes").update({"status": "video_completed", "video_url": vid_url}).eq("id", scene["id"]).execute()
+        else:
+            raise Exception("Job completed but no video URL was found.")
+            
+    except Exception as e:
+        print(f"  -> Error generating reel scene video: {e}")
+        supabase.table("reel_scenes").update({"status": "error"}).eq("id", scene["id"]).execute()
+
+async def process_bgm_search(reel):
+    query = reel.get("bgm_prompt") or "sleep meditation music no copyright"
+    print(f"\n[+] Orchestrator executing BGM Search for Reel: {reel['id']} (Query: {query})")
+    try:
+        import subprocess, json
+        cmd = ["python", "-m", "yt_dlp", f"ytsearch10:{query}", "--dump-json"]
+        result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
+        bgm_options = []
+        for line in result.stdout.strip().split('\n'):
+            if not line.strip(): continue
+            try:
+                data = json.loads(line)
+                bgm_options.append({
+                    "title": data.get("title"),
+                    "url": data.get("webpage_url"),
+                    "duration": data.get("duration")
+                })
+            except: pass
+        supabase.table("reels").update({
+            "status": "bgm_selection",
+            "bgm_options": bgm_options
+        }).eq("id", reel['id']).execute()
+    except Exception as e:
+        print(f"[-] Error searching BGM: {e}")
+        supabase.table("reels").update({"status": "bgm_selection"}).eq("id", reel['id']).execute()
+
 async def main_loop():
     global supabase
     print("YTAuto Parallel Chat Orchestrator started. Listening for pending messages and generation tasks...")
@@ -985,32 +1430,32 @@ async def main_loop():
             response = supabase.table("episode_chats").select("*").eq("role", "ai").eq("status", "pending").execute()
             pending_msgs = response.data
             if pending_msgs:
-                tasks = [process_chat_message(msg) for msg in pending_msgs]
-                await asyncio.gather(*tasks)
+                for msg in pending_msgs:
+                    dispatch_task("process_chat_message", msg["id"], process_chat_message(msg))
                 
             # Poll for pending AI messages (Reels)
             response_reels = supabase.table("reel_chats").select("*").eq("role", "ai").eq("status", "pending").execute()
             if response_reels.data:
-                tasks = [process_reel_chat_message(msg) for msg in response_reels.data]
-                await asyncio.gather(*tasks)
+                for msg in response_reels.data:
+                    dispatch_task("process_reel_chat_message", msg["id"], process_reel_chat_message(msg))
                 
             # Poll for World Builder chats
             wb_chats = supabase.table("world_builder_chats").select("*").eq("status", "pending").execute()
             if wb_chats.data:
-                tasks = [process_wb_chat_message(msg) for msg in wb_chats.data]
-                await asyncio.gather(*tasks)
+                for msg in wb_chats.data:
+                    dispatch_task("process_wb_chat_message", msg["id"], process_wb_chat_message(msg))
                 
             # Poll for scene breakdowns (Episodes)
             ep_res = supabase.table("episodes").select("*").eq("status", "generating_prompts").execute()
             if ep_res.data:
                 for ep in ep_res.data:
-                    await process_scene_breakdown(ep)
+                    dispatch_task("process_scene_breakdown", ep["id"], process_scene_breakdown(ep))
                     
             # Poll for scene breakdowns (Reels)
             reel_res = supabase.table("reels").select("*").eq("status", "generating_prompts").execute()
             if reel_res.data:
                 for reel in reel_res.data:
-                    await process_reel_scene_breakdown(reel)
+                    dispatch_task("process_reel_scene_breakdown", reel["id"], process_reel_scene_breakdown(reel))
                     
             # Poll for master audio track generation (Episodes)
             master_audio_res = supabase.table("episodes").select("*").eq("status", "generating_audio").execute()
@@ -1019,7 +1464,7 @@ async def main_loop():
                 for ep in master_audio_res.data:
                     print(f"\n[+] Orchestrator detected Master Audio request for Episode: {ep['id']}")
                     try:
-                        await audio_mixer.process_master_audio(ep['id'])
+                        dispatch_task("process_master_audio", ep["id"], audio_mixer.process_master_audio(ep["id"]))
                     except Exception as e:
                         print(f"[-] Error generating master audio: {e}")
                         supabase.table("episodes").update({"status": "error_audio"}).eq("id", ep['id']).execute()
@@ -1031,7 +1476,7 @@ async def main_loop():
                 for reel in reel_audio_res.data:
                     print(f"\n[+] Orchestrator detected Master Audio request for Reel: {reel['id']}")
                     try:
-                        await audio_mixer.process_reel_master_audio(reel['id'])
+                        dispatch_task("process_reel_master_audio", reel["id"], audio_mixer.process_reel_master_audio(reel["id"]))
                     except Exception as e:
                         print(f"[-] Error generating master audio for reel: {e}")
                         supabase.table("reels").update({"status": "error_audio"}).eq("id", reel['id']).execute()
@@ -1043,7 +1488,7 @@ async def main_loop():
                 for reel in bgm_apply_res.data:
                     print(f"\n[+] Orchestrator detected BGM Application request for Reel: {reel['id']}")
                     try:
-                        await audio_mixer.apply_bgm(reel['id'])
+                        dispatch_task("apply_bgm", reel["id"], audio_mixer.apply_bgm(reel["id"]))
                     except Exception as e:
                         print(f"[-] Error applying BGM for reel: {e}")
                         supabase.table("reels").update({"status": "error_audio"}).eq("id", reel['id']).execute()
@@ -1055,7 +1500,9 @@ async def main_loop():
                 for reel in reel_compile_res.data:
                     print(f"\n[+] Orchestrator detected Video Compile request for Reel: {reel['id']}")
                     try:
-                        await video_compiler.compile_final_video(reel['id'])
+                        # Lock status immediately to prevent duplicate task spawning every 2s
+                        supabase.table("reels").update({"status": "processing_compilation"}).eq("id", reel['id']).execute()
+                        dispatch_task("compile_final_video", reel["id"], video_compiler.compile_final_video(reel["id"]))
                     except Exception as e:
                         print(f"[-] Error compiling video for reel: {e}")
                         supabase.table("reels").update({"status": "error_video"}).eq("id", reel['id']).execute()
@@ -1064,33 +1511,33 @@ async def main_loop():
             audio_res = supabase.table("episode_scenes").select("*").eq("status", "generating_audio").execute()
             if audio_res.data:
                 for sc in audio_res.data:
-                    await generate_scene_audio(sc)
+                    dispatch_task("generate_scene_audio", sc["id"], generate_scene_audio(sc))
                     
             # Poll for scene video generation
             vid_res = supabase.table("episode_scenes").select("*").eq("status", "generating_video").execute()
             if vid_res.data:
                 for sc in vid_res.data:
-                    await generate_scene_video(sc)
+                    dispatch_task("generate_scene_video", sc["id"], generate_scene_video(sc))
                     
             # Poll for scene prompt regeneration
             prompt_regen_res = supabase.table("episode_scenes").select("*").eq("status", "regenerating_prompt").execute()
             if prompt_regen_res.data:
                 for sc in prompt_regen_res.data:
-                    await regenerate_scene_prompt(sc)
+                    dispatch_task("regenerate_scene_prompt", sc["id"], regenerate_scene_prompt(sc))
             
             # Poll for reel scene asset generation (Wikimedia Commons)
             reel_vid_res = supabase.table("reel_scenes").select("*").eq("status", "generating_video").execute()
             if reel_vid_res.data:
                 import asset_collector
                 for sc in reel_vid_res.data:
-                    await asset_collector.process_reel_scene_asset(sc)
+                    dispatch_task("process_reel_scene_asset", sc["id"], asset_collector.process_reel_scene_asset(sc))
                     
             # Poll for reel scene audio chunk regeneration
             reel_chunk_res = supabase.table("reel_scenes").select("*, reels!inner(id)").eq("status", "regenerating_audio").execute()
             if reel_chunk_res.data:
                 import audio_mixer
                 for sc in reel_chunk_res.data:
-                    await audio_mixer.regenerate_reel_scene_chunk(sc)
+                    dispatch_task("regenerate_reel_scene_chunk", sc["id"], audio_mixer.regenerate_reel_scene_chunk(sc))
                     
             # Poll for pending user invites
             invites_res = supabase.table("user_invites").select("*").eq("status", "pending").execute()
@@ -1155,7 +1602,7 @@ async def main_loop():
                         supabase.table("tts_jobs").update({"status": "error"}).eq("id", job["id"]).execute()
                         
             # Poll for TTS Image Requests
-            img_res = supabase.table("tts_jobs").select("*").eq("status", "image_requested").execute()
+            img_res = supabase.table("tts_jobs").select("*").eq("status", "image_requested_local").execute()
             if img_res.data:
                 for job in img_res.data:
                     try:
@@ -1163,7 +1610,7 @@ async def main_loop():
                         
                         # 1. Ask Gemini to generate an image prompt based on the TTS text
                         prompt_res = gemini_client.models.generate_content(
-                            model='gemini-2.5-flash',
+                            model='gemini-2.0-flash',
                             contents=f"You are a cinematic prompt engineer. Based on the following voiceover script, write a single concise 1-2 sentence image generation prompt for a highly detailed, cinematic photograph that perfectly captures the mood. Script: {job['text_content']}"
                         )
                         image_prompt = prompt_res.text.strip()
@@ -1209,17 +1656,17 @@ async def main_loop():
                         supabase.table("tts_jobs").update({"status": "error"}).eq("id", job["id"]).execute()
 
             # Poll for TTS Video Requests
-            vid_res = supabase.table("tts_jobs").select("*").eq("status", "video_requested").execute()
+            vid_res = supabase.table("tts_jobs").select("*").eq("status", "video_requested_local").execute()
             if vid_res.data:
                 for job in vid_res.data:
                     try:
                         print(f"\n[+] Processing TTS Video Job: {job['id']}")
                         
-                        runpod_key = os.getenv("RUNPOD_API_KEY")
+                        runpod_key = os.getenv("RUNPOD_VIDEO_API_KEY")
                         runpod_endpoint = os.getenv("RUNPOD_LTX_ENDPOINT_ID")
                         
                         if not runpod_key or not runpod_endpoint:
-                            raise Exception("RUNPOD_API_KEY or RUNPOD_LTX_ENDPOINT_ID is missing from environment variables.")
+                            raise Exception("RUNPOD_VIDEO_API_KEY or RUNPOD_LTX_ENDPOINT_ID is missing from environment variables.")
                             
                         import requests
                         import time
@@ -1275,6 +1722,162 @@ async def main_loop():
                     except Exception as e:
                         print(f"  -> Video Job Error: {e}")
                         supabase.table("tts_jobs").update({"status": "error"}).eq("id", job["id"]).execute()
+
+
+            # Poll for reel scenes Image Requests (Sleep Story Pipelines)
+            reel_img_res = supabase.table("reel_scenes").select("*").eq("status", "image_requested_local").execute()
+            if reel_img_res.data:
+                for scene in reel_img_res.data:
+                    try:
+                        print(f"\n[+] Processing Reel Scene Image Job: {scene['id']}")
+                        context_text = scene.get('visual_prompt_context') or scene.get('dialogue')
+                        
+                        # Parse dynamic aspect ratio from the frontend
+                        width, height = 1024, 1024
+                        import re
+                        ar_match = re.search(r'\[AR:\s*(16:9|9:16)\]', context_text)
+                        if ar_match:
+                            ar = ar_match.group(1)
+                            if ar == '16:9':
+                                width, height = 1280, 720
+                            elif ar == '9:16':
+                                width, height = 720, 1280
+                            # Remove the tag so it doesn't confuse the LLM
+                            context_text = re.sub(r'\[AR:\s*(16:9|9:16)\]', '', context_text).strip()
+                        
+                        
+                        from openai import OpenAI
+                        prompt_res = None
+                        last_err = None
+                        
+                        for _ in range(max(1, len(groq_keys.keys))):
+                            key = groq_keys.get_key()
+                            try:
+                                client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
+                                response = client.chat.completions.create(
+                                    model="llama-3.3-70b-versatile",
+                                    messages=[
+                                        {"role": "system", "content": "You are a cinematic prompt engineer. Output ONLY the raw visual prompt for FLUX image generation. Do NOT include any intro text, conversational preambles, prefixes, or quotation marks."},
+                                        {"role": "user", "content": f"Script segment: {context_text}"}
+                                    ]
+                                )
+                                prompt_res = response.choices[0].message.content
+                                break
+                            except Exception as e:
+                                last_err = e
+                        
+                        if not prompt_res:
+                            raise last_err
+                            
+                        image_prompt = prompt_res.strip()
+                        # Clean conversational preambles if LLM still includes them
+                        intro_patterns = [
+                            r"^(Here is|Here's) [^\n:]+:\s*",
+                            r"^(Prompt|Image Prompt):\s*"
+                        ]
+                        for pat in intro_patterns:
+                            image_prompt = re.sub(pat, "", image_prompt, flags=re.IGNORECASE).strip()
+                        image_prompt = image_prompt.strip('"\'')
+                        print(f"  -> Generated Image Prompt: {image_prompt}")
+                        
+                        import base64
+                        import requests
+                        import os
+                        
+                        def generate_image_sync():
+                            response = requests.post(
+                                "https://api.runpod.ai/v2/black-forest-labs-flux-1-schnell/runsync",
+                                headers={
+                                    "Authorization": f"Bearer {os.getenv('RUNPOD_IMAGE_API_KEY')}",
+                                    "Content-Type": "application/json"
+                                },
+                                json={
+                                    "input": {
+                                        "prompt": image_prompt,
+                                        "width": width,
+                                        "height": height,
+                                        "num_inference_steps": 4
+                                    }
+                                }
+                            )
+                            return response.json()
+                            
+                        response_data = await asyncio.to_thread(generate_image_sync)
+                        
+                        if "error" in response_data:
+                            raise Exception(response_data["error"])
+                            
+                        # RunPod returns output.result, output.image_url, or base64 output.image
+                        output = response_data.get("output", {})
+                        if isinstance(output, str) and output.startswith("http"):
+                            image_url = output
+                        else:
+                            image_url = output.get("result") or output.get("image_url")
+                        
+                        if isinstance(image_url, list) and len(image_url) > 0:
+                            image_url = image_url[0]
+                            
+                        if image_url and isinstance(image_url, str) and image_url.startswith("http"):
+                            img_resp = requests.get(image_url)
+                            image_bytes = img_resp.content
+                        elif isinstance(output, dict) and "image" in output:
+                            # It might be base64
+                            image_bytes = base64.b64decode(output["image"])
+                        else:
+                            raise Exception(f"Unexpected RunPod response: {response_data}")
+                            
+                        supabase_path = f"images/reel_scene_{scene['id']}.png"
+                        
+                        def upload_image_sync():
+                            supabase.storage.from_("images").upload(
+                                file=image_bytes,
+                                path=supabase_path,
+                                file_options={"content-type": "image/png", "x-upsert": "true"}
+                            )
+                            return supabase.storage.from_("images").get_public_url(supabase_path)
+                            
+                        public_url = await asyncio.to_thread(upload_image_sync)
+                        
+                        supabase.table("reel_scenes").update({"status": "image_completed", "image_url": public_url, "search_query": image_prompt}).eq("id", scene["id"]).execute()
+                        print(f"  -> Uploaded Image to Supabase: {public_url}")
+                    except Exception as e:
+                        print(f"  -> Error generating reel scene image: {e}")
+                        supabase.table("reel_scenes").update({"status": "error", "error_message": str(e)}).eq("id", scene["id"]).execute()
+            # Poll for reel scenes Video Requests
+            reel_vid_req_res = supabase.table("reel_scenes").select("*").eq("status", "video_requested_local").execute()
+            if reel_vid_req_res.data:
+                for scene in reel_vid_req_res.data:
+                    dispatch_task("process_reel_scene_video_job", scene["id"], process_reel_scene_video_job(scene))
+
+            # Poll for BGM Search (Reels)
+            bgm_search_res = supabase.table("reels").select("*").eq("status", "bgm_searching").execute()
+            if bgm_search_res.data:
+                for reel in bgm_search_res.data:
+                    query = reel.get("error_message") or "sleep meditation music no copyright"
+                    print(f"\n[+] Orchestrator executing BGM Search for Reel: {reel['id']} (Query: {query})")
+                    try:
+                        import subprocess, json
+                        cmd = ["python", "-m", "yt_dlp", f"ytsearch10:{query}", "--dump-json"]
+                        result = subprocess.run(cmd, capture_output=True, text=True)
+                        bgm_options = []
+                        for line in result.stdout.strip().split('\n'):
+                            if not line.strip(): continue
+                            try:
+                                data = json.loads(line)
+                                bgm_options.append({
+                                    "title": data.get("title"),
+                                    "url": data.get("webpage_url"),
+                                    "duration": data.get("duration")
+                                })
+                            except: pass
+                        supabase.table("reels").update({
+                            "status": "bgm_selection",
+                            "bgm_options": bgm_options,
+                            "error_message": None
+                        }).eq("id", reel['id']).execute()
+                    except Exception as e:
+                        print(f"[-] Error searching BGM: {e}")
+                        supabase.table("reels").update({"status": "bgm_selection"}).eq("id", reel['id']).execute()
                     
         except Exception as e:
             print(f"Error polling database: {e}")

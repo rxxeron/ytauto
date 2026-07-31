@@ -51,15 +51,33 @@ async def compile_final_video(reel_id):
     if not scenes: return
         
     master_audio_rel = reel.get("master_audio_url")
-    if not master_audio_rel: return
+    if not master_audio_rel: 
+        print("[-] Master audio URL missing for reel!")
+        return
         
+    os.makedirs("local_cache/assets/audio", exist_ok=True)
     master_audio_path = f"local_cache/assets/audio/reel_{reel_id}_master.mp3"
     
+    # Download master audio if not present locally
+    if not os.path.exists(master_audio_path) or os.path.getsize(master_audio_path) == 0:
+        if master_audio_rel.startswith("http"):
+            print(f"  -> Downloading master audio from Supabase: {master_audio_rel}")
+            import requests
+            r = requests.get(master_audio_rel)
+            if r.status_code == 200:
+                with open(master_audio_path, "wb") as f:
+                    f.write(r.content)
+            else:
+                print(f"[-] Failed to download master audio: status {r.status_code}")
+                return
+
     try:
         audio = AudioSegment.from_mp3(master_audio_path)
         duration_sec = len(audio) / 1000.0
     except Exception as e:
         print(f"[-] Could not load audio: {e}")
+        duration_sec = 60.0
+
     # 1. Load exact audio durations and build ASS Subtitles
     timing_path = f"local_cache/assets/audio/reel_{reel_id}_timing.json"
     timing_map = []
@@ -76,8 +94,15 @@ async def compile_final_video(reel_id):
         cs = int((ms % 1000) // 10)
         return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
+    # Determine resolution from orientation or aspect ratio
+    orientation = reel.get("orientation", "16:9")
+    if orientation == "9:16":
+        width, height = 1080, 1920
+    else:
+        width, height = 1920, 1080
+
     with open(ass_path, "w", encoding="utf-8") as f:
-        f.write("[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n")
+        f.write(f"[Script Info]\nScriptType: v4.00+\nPlayResX: {width}\nPlayResY: {height}\n\n")
         f.write("[V4+ Styles]\n")
         f.write("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
         f.write("Style: Hook,Arial Black,80,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,4,2,10,10,960,1\n")
@@ -101,78 +126,168 @@ async def compile_final_video(reel_id):
             dur_sec = max((node['end_ms'] - node['start_ms']) / 1000.0, (duration_sec * 1000.0 - node['start_ms']) / 1000.0)
         scene_durations[sid] = dur_sec
 
-    visible_chunks = []
-    current_chunk = None
+    compile_mode = reel.get("compile_mode")
+    if compile_mode == "scene_based":
+        chunkSize = 1
+    elif compile_mode == "portion_based":
+        chunkSize = 4
+    else:
+        # Fallback Auto-Detect Mode
+        has_individual_scene_assets = any(
+            sc.get("video_url") or sc.get("image_url") 
+            for idx, sc in enumerate(scenes) if idx % 4 != 0
+        )
+        chunkSize = 1 if has_individual_scene_assets else (4 if reel.get("reel_type") == "sleep" else 1)
     
-    for scene in scenes:
-        scene_id = scene["id"]
-        scene_time = scene_durations.get(scene_id, 2.0)
-        
-        if scene.get("trim_end"):
-            scene_time = float(scene["trim_end"])
+    print(f"  -> Movie Compiler Mode: {'Scene-Based (1 Scene / Unit)' if chunkSize == 1 else 'Portion-Based (4 Scenes / Unit)'}")
+    portions = []
+    for i in range(0, len(scenes), chunkSize):
+        portions.append(scenes[i:i + chunkSize])
+
+    visible_chunks = []
+    for portion in portions:
+        leader = portion[0]
+        portion_duration = 0.0
+        for sc in portion:
+            p_time = scene_durations.get(sc["id"])
+            if not p_time:
+                # Measure exact mp3 audio file duration for this scene
+                audio_url = sc.get("audio_url")
+                if audio_url:
+                    try:
+                        import requests
+                        r = requests.get(audio_url)
+                        if r.status_code == 200:
+                            tmp_mp3 = f"temp_sc_{sc['id']}.mp3"
+                            with open(tmp_mp3, "wb") as f: f.write(r.content)
+                            p_time = len(AudioSegment.from_mp3(tmp_mp3)) / 1000.0
+                            if os.path.exists(tmp_mp3): os.remove(tmp_mp3)
+                    except Exception as ex:
+                        print(f"[-] Could not fetch audio length for scene {sc['id']}: {ex}")
             
-        if scene.get("is_hidden") and current_chunk is not None:
-            current_chunk['duration'] += scene_time
-        else:
-            current_chunk = {
-                "scene": scene,
-                "duration": scene_time
-            }
-            visible_chunks.append(current_chunk)
+            if not p_time: p_time = 3.0
+            if sc.get("trim_end"): p_time = float(sc["trim_end"])
+            portion_duration += p_time
+
+        asset_url = leader.get("video_url") or leader.get("image_url")
+        if not asset_url:
+            # Fallback to any follower scene asset in this portion
+            for f in portion[1:]:
+                if f.get("video_url") or f.get("image_url"):
+                    asset_url = f.get("video_url") or f.get("image_url")
+                    break
+
+        visible_chunks.append({
+            "leader": leader,
+            "asset_url": asset_url,
+            "duration": max(2.0, portion_duration)
+        })
             
     chunk_files = []
     
-    # 2. Generate individual chunks
+    # 2. Generate retimed chunk video files using FFmpeg
     for i, chunk in enumerate(visible_chunks):
-        scene = chunk["scene"]
+        asset_url = chunk.get("asset_url")
         time_per_scene = chunk["duration"]
-        
-        img_rel = scene.get("image_url")
-        if not img_rel: continue
-        
-        if img_rel.startswith("http://") or img_rel.startswith("https://"):
-            asset_path = img_rel
-        else:
-            asset_path = os.path.abspath(os.path.join("frontend", "public", img_rel.lstrip("/")))
-            asset_path = asset_path.replace("\\", "/")
-        
-        ext = asset_path.split('.')[-1].lower()
-        is_video = ext in ['mp4', 'webm', 'mov']
         
         chunk_path = f"temp_chunk_{reel_id}_{i}.mp4"
         chunk_files.append(chunk_path)
         
-        print(f"  -> Processing Chunk {i} ({'Video' if is_video else 'Image'}), Duration: {time_per_scene:.2f}s...")
+        if not asset_url:
+            print(f"  -> Portion {i+1} has no visual asset, creating black fallback card ({time_per_scene:.2f}s)...")
+            cmd = [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}", "-t", str(time_per_scene),
+                "-vf", f"drawtext=text='Portion {i+1}':fontcolor=white:fontsize=48:x=(w-tw)/2:y=(h-th)/2",
+                "-c:v", "libx264", "-r", "30", "-an", chunk_path
+            ]
+            await run_ffmpeg(cmd)
+            continue
+
+        if asset_url.startswith("http://") or asset_url.startswith("https://"):
+            asset_path = asset_url
+        else:
+            asset_path = os.path.abspath(os.path.join("frontend", "public", asset_url.lstrip("/")))
+            asset_path = asset_path.replace("\\", "/")
         
-        # Calculate fade out start time
+        ext = asset_path.split('?')[0].split('.')[-1].lower()
+        is_video = ext in ['mp4', 'webm', 'mov']
+        
+        print(f"  -> Stitching Unit {i+1} ({'Wan2.x Video' if is_video else 'FLUX Image'}), Duration: {time_per_scene:.2f}s...")
+        
         fade_out_st = max(0, time_per_scene - 0.5)
         
-        # Build complex filter: scale, crop, fade in (0.5s), fade out (0.5s)
-        vf = f"fps=30,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out_st:.2f}:d=0.5,format=yuv420p"
-        
-        trim_start = scene.get("trim_start", 0) or 0
+        # Dual Video Generation handling for scenes/portions > 30 seconds
+        secondary_asset_url = chunk.get("leader", {}).get("secondary_video_url") or chunk.get("leader", {}).get("video_url_2")
         
         try:
-            if is_video:
-                # Add -fflags +genpts and seek properly for stable looping
+            if secondary_asset_url and time_per_scene > 30.0:
+                print(f"  -> Audio > 30s ({time_per_scene:.1f}s): Stitching 2 distinct video generations for Unit {i+1}...")
+                half_t = time_per_scene / 2.0
+                c1_path = f"sub_c1_{reel_id}_{i}.mp4"
+                c2_path = f"sub_c2_{reel_id}_{i}.mp4"
+                
+                vf_h = f"fps=30,scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},format=yuv420p"
+                
+                # Render Sub-video 1
+                cmd1 = ["ffmpeg", "-y", "-i", asset_path, "-t", str(half_t), "-filter_complex", f"fps=30,scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},split[v1][v2];[v2]reverse[vrev];[v1][vrev]concat=n=2:v=1[bm];[bm]loop=loop=-1:size=600:start=0,format=yuv420p", "-c:v", "libx264", "-an", c1_path]
+                await run_ffmpeg(cmd1)
+                
+                # Render Sub-video 2
+                sec_path = secondary_asset_url if secondary_asset_url.startswith("http") else os.path.abspath(os.path.join("frontend", "public", secondary_asset_url.lstrip("/")))
+                cmd2 = ["ffmpeg", "-y", "-i", sec_path, "-t", str(half_t), "-filter_complex", f"fps=30,scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},split[v1][v2];[v2]reverse[vrev];[v1][vrev]concat=n=2:v=1[bm];[bm]loop=loop=-1:size=600:start=0,format=yuv420p", "-c:v", "libx264", "-an", c2_path]
+                await run_ffmpeg(cmd2)
+                
+                # Concat sub-videos into chunk_path
+                sub_concat = f"sub_concat_{reel_id}_{i}.txt"
+                with open(sub_concat, "w") as scf:
+                    scf.write(f"file '{c1_path}'\nfile '{c2_path}'\n")
+                
+                cmd_cc = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", sub_concat, "-vf", f"fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out_st:.2f}:d=0.5,format=yuv420p", "-c:v", "libx264", "-an", chunk_path]
+                await run_ffmpeg(cmd_cc)
+                
+                if os.path.exists(c1_path): os.remove(c1_path)
+                if os.path.exists(c2_path): os.remove(c2_path)
+                if os.path.exists(sub_concat): os.remove(sub_concat)
+                
+            elif is_video:
+                # Advanced Ping-Pong Boomerang Looping Filter (Forward -> Reverse -> Forward)
+                vf_pingpong = (
+                    f"fps=30,scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
+                    f"split[v1][v2];[v2]reverse[vrev];[v1][vrev]concat=n=2:v=1[boomerang];"
+                    f"[boomerang]loop=loop=-1:size=600:start=0,"
+                    f"fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out_st:.2f}:d=0.5,format=yuv420p"
+                )
                 cmd = [
-                    "ffmpeg", "-y", "-fflags", "+genpts", "-stream_loop", "-1", "-i", asset_path, "-ss", str(trim_start), "-t", str(time_per_scene),
-                    "-vf", vf, "-c:v", "libx264", "-r", "30", "-video_track_timescale", "90000", "-an", chunk_path
+                    "ffmpeg", "-y", "-i", asset_path, "-t", str(time_per_scene),
+                    "-filter_complex", vf_pingpong, "-c:v", "libx264", "-r", "30", "-video_track_timescale", "90000", "-an", chunk_path
+                ]
+                await run_ffmpeg(cmd)
+            else:
+                # Gentle Slow-Motion Ken Burns Pan/Zoom Filter for long static images over 100s+
+                vf_kenburns = (
+                    f"loop=1:size=1:start=0,"
+                    f"scale={width*2}:{height*2},"
+                    f"zoompan=z='min(zoom+0.0003,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={width}x{height},"
+                    f"fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out_st:.2f}:d=0.5,format=yuv420p"
+                )
+                cmd = [
+                    "ffmpeg", "-y", "-i", asset_path, "-t", str(time_per_scene),
+                    "-vf", vf_kenburns, "-c:v", "libx264", "-r", "30", "-video_track_timescale", "90000", "-an", chunk_path
+                ]
+                await run_ffmpeg(cmd)
+        except Exception as e:
+            print(f"[-] Filter error on Unit {i+1}, falling back to standard loop: {e}")
+            vf_simple = f"fps=30,scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out_st:.2f}:d=0.5,format=yuv420p"
+            if is_video:
+                cmd = [
+                    "ffmpeg", "-y", "-fflags", "+genpts", "-stream_loop", "-1", "-i", asset_path, "-t", str(time_per_scene),
+                    "-vf", vf_simple, "-c:v", "libx264", "-r", "30", "-video_track_timescale", "90000", "-an", chunk_path
                 ]
             else:
                 cmd = [
                     "ffmpeg", "-y", "-loop", "1", "-i", asset_path, "-t", str(time_per_scene),
-                    "-vf", vf, "-c:v", "libx264", "-r", "30", "-video_track_timescale", "90000", "-an", chunk_path
+                    "-vf", vf_simple, "-c:v", "libx264", "-r", "30", "-video_track_timescale", "90000", "-an", chunk_path
                 ]
-            await run_ffmpeg(cmd)
-        except Exception as e:
-            print(f"[-] Error processing chunk {i}: {e}")
-            # Fallback chunk with error text so the user knows it failed
-            cmd = [
-                "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=1080x1920", "-t", str(time_per_scene),
-                "-vf", "drawtext=text='FFmpeg Render Error':fontcolor=white:fontsize=48:x=(w-tw)/2:y=(h-th)/2",
-                "-c:v", "libx264", "-an", chunk_path
-            ]
             await run_ffmpeg(cmd)
 
     # 2. Create FFmpeg concat file for chunks

@@ -121,7 +121,6 @@ export default function TTSUtility() {
       text_content: text.trim(),
       voice_id: voiceId,
       status: 'pending',
-      user_id: user?.id,
       user_email: user?.email
     }]);
 

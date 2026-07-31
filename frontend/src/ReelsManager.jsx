@@ -21,10 +21,16 @@ export default function ReelsManager() {
     const title = prompt("Enter a topic for your Historical Short (e.g., 'The Fall of Rome'):");
     if (!title) return;
     
+    let orientation = prompt("Enter orientation (16:9 for landscape, 9:16 for Shorts):", "9:16");
+    if (orientation !== "16:9" && orientation !== "9:16") {
+      orientation = "9:16";
+    }
+    
     const { data, error } = await supabase.from('reels').insert({ 
       title,
       status: 'draft',
-      reel_type: 'standard'
+      reel_type: 'standard',
+      orientation
     }).select().single();
     
     if (error) {
@@ -40,10 +46,16 @@ export default function ReelsManager() {
     const title = prompt("Enter a topic for your Sleep Story (e.g., 'A Quiet Night in a Cabin'):");
     if (!title) return;
     
+    let orientation = prompt("Enter orientation (16:9 for landscape, 9:16 for Shorts):", "16:9");
+    if (orientation !== "16:9" && orientation !== "9:16") {
+      orientation = "16:9";
+    }
+    
     const { data, error } = await supabase.from('reels').insert({ 
       title,
       status: 'draft',
-      reel_type: 'sleep'
+      reel_type: 'sleep',
+      orientation
     }).select().single();
     
     if (error) {

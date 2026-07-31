@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Users, Settings, PlaySquare, Bell, Search, LogOut, Loader, Folder, Key, Mic, Database } from 'lucide-react';
+import { LayoutDashboard, Users, Settings, PlaySquare, Bell, Search, LogOut, Loader, Folder, Key, Mic, Database, Video } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import Auth from './Auth';
 import BakeOffView from './BakeOffView';
@@ -13,6 +13,7 @@ import ReelAssetsView from './ReelAssetsView';
 import APIKeysDashboard from './APIKeysDashboard';
 import PartnersManager from './PartnersManager';
 import TTSUtility from './TTSUtility';
+import TextToVideoUtility from './TextToVideoUtility';
 import StorageManager from './StorageManager';
 import './index.css';
 
@@ -186,6 +187,7 @@ function App() {
           <NavItem icon={<Folder size={20} />} label="Series Manager" active={activeTab === 'series_manager'} onClick={() => { setActiveTab('series_manager'); setSelectedEpisodeId(null); setSelectedReelId(null); }} />
           <NavItem icon={<PlaySquare size={20} />} label="Shorts Studio" active={activeTab === 'reels_manager'} onClick={() => { setActiveTab('reels_manager'); setSelectedEpisodeId(null); setSelectedReelId(null); }} />
           <NavItem icon={<Mic size={20} />} label="TTS Studio" active={activeTab === 'tts_utility'} onClick={() => { setActiveTab('tts_utility'); setSelectedEpisodeId(null); setSelectedReelId(null); }} />
+          <NavItem icon={<Video size={20} />} label="Video Pipeline" active={activeTab === 'video_pipeline'} onClick={() => { setActiveTab('video_pipeline'); setSelectedEpisodeId(null); setSelectedReelId(null); }} />
           <NavItem icon={<Database size={20} />} label="Cloud Storage" active={activeTab === 'storage_manager'} onClick={() => { setActiveTab('storage_manager'); setSelectedEpisodeId(null); setSelectedReelId(null); }} />
 
           {profile?.role === 'super_admin' && (
@@ -237,6 +239,8 @@ function App() {
           <ReelsManager />
         ) : activeTab === 'tts_utility' ? (
           <TTSUtility />
+        ) : activeTab === 'video_pipeline' ? (
+          <TextToVideoUtility />
         ) : activeTab === 'storage_manager' ? (
           <StorageManager userRole={profile?.role} />
         ) : activeTab === 'api_dashboard' && profile?.role === 'super_admin' ? (
