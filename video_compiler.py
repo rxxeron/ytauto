@@ -208,6 +208,20 @@ async def compile_final_video(reel_id):
         else:
             asset_path = os.path.abspath(os.path.join("frontend", "public", asset_url.lstrip("/")))
             asset_path = asset_path.replace("\\", "/")
+            if not os.path.exists(asset_path):
+                # Check if it was saved directly in root or local_cache
+                alt_path = asset_url.lstrip("/")
+                if os.path.exists(alt_path):
+                    asset_path = alt_path
+                else:
+                    print(f"  -> Asset file not found locally ({asset_url}), generating fallback card ({time_per_scene:.2f}s)...")
+                    cmd = [
+                        "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}", "-t", str(time_per_scene),
+                        "-vf", f"drawtext=text='Scene {i+1}':fontcolor=white:fontsize=48:x=(w-tw)/2:y=(h-th)/2",
+                        "-c:v", "libx264", "-r", "30", "-an", chunk_path
+                    ]
+                    await run_ffmpeg(cmd)
+                    continue
         
         ext = asset_path.split('?')[0].split('.')[-1].lower()
         is_video = ext in ['mp4', 'webm', 'mov']
