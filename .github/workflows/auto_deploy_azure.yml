@@ -19,7 +19,7 @@ jobs:
           key: ${{ secrets.AZURE_VM_SSH_KEY }}
           password: ${{ secrets.AZURE_VM_PASSWORD }}
           port: 22
-          script_stop: false
+          command_timeout: 2m
           script: |
             echo "[+] Navigating to ytauto repository..."
             if [ -d "$HOME/ytauto" ]; then
@@ -46,6 +46,12 @@ jobs:
             echo "[+] Restarting ai_orchestrator.py daemon..."
             pkill -9 -f "ai_orchestrator.py" || true
             sleep 1
-            (nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 </dev/null &)
+            
+            if command -v screen >/dev/null 2>&1; then
+              screen -X -S ytauto quit || true
+              screen -dmS ytauto python3 -u ai_orchestrator.py
+            else
+              nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 </dev/null &
+            fi
 
             echo "[+] Auto Deploy completed successfully!"
