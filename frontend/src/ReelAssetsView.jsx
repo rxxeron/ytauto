@@ -607,8 +607,71 @@ export default function ReelAssetsView({ reelId, onBack }) {
                       </p>
 
                       {scene.audio_url && (
-                        <audio controls src={scene.audio_url} style={{ width: '100%', height: '28px', opacity: 0.8 }} />
+                        <audio controls src={scene.audio_url} style={{ width: '100%', height: '28px', opacity: 0.8, marginBottom: '8px' }} />
                       )}
+
+                      {/* Visual Asset Preview & Query Context */}
+                      <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed rgba(255,255,255,0.1)', display: 'flex', gap: '16px', alignItems: 'center' }}>
+                        {scene.video_url ? (
+                          <div style={{ flex: '0 0 200px' }}>
+                            <video src={scene.video_url} controls loop autoPlay muted style={{ width: '100%', height: '110px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border-light)' }} />
+                          </div>
+                        ) : scene.image_url ? (
+                          <div style={{ flex: '0 0 200px' }}>
+                            <img src={scene.image_url} alt={`Scene ${scene.scene_number}`} style={{ width: '100%', height: '110px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border-light)' }} />
+                          </div>
+                        ) : (
+                          <div style={{ flex: '0 0 200px', height: '110px', background: 'rgba(0,0,0,0.3)', borderRadius: '8px', border: '1px dashed rgba(255,255,255,0.2)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '11px' }}>
+                            <ImageIcon size={20} style={{ marginBottom: '4px' }} />
+                            <span>No Visual Asset Attached</span>
+                          </div>
+                        )}
+
+                        <div style={{ flex: 1, fontSize: '12px' }}>
+                          <div style={{ color: 'var(--text-muted)', marginBottom: '6px' }}>
+                            <span style={{ fontWeight: 'bold' }}>Visual Search Query: </span>
+                            <span style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', color: '#38bdf8' }}>
+                              {scene.search_query || scene.visual_prompt || 'Auto Context'}
+                            </span>
+                          </div>
+                          
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+                            <button 
+                              onClick={async () => {
+                                await supabase.from('reel_scenes').update({ status: 'generating_video' }).eq('id', scene.id);
+                                fetchData();
+                              }}
+                              className="btn-secondary"
+                              style={{ padding: '4px 10px', fontSize: '11px', color: '#10b981', borderColor: 'rgba(16,185,129,0.3)' }}
+                            >
+                              <ImageIcon size={12} style={{ display: 'inline', marginRight: '4px' }} />
+                              Fetch Pixabay/Wikimedia
+                            </button>
+
+                            <button 
+                              onClick={async () => {
+                                await supabase.from('reel_scenes').update({ status: 'image_requested_local', visual_prompt_context: scene.dialogue }).eq('id', scene.id);
+                                fetchData();
+                              }}
+                              className="btn-secondary"
+                              style={{ padding: '4px 10px', fontSize: '11px', color: '#f59e0b', borderColor: 'rgba(245,158,11,0.3)' }}
+                            >
+                              ✨ FLUX AI Image
+                            </button>
+
+                            <button 
+                              onClick={async () => {
+                                await supabase.from('reel_scenes').update({ status: 'video_requested_local', visual_prompt_context: scene.dialogue }).eq('id', scene.id);
+                                fetchData();
+                              }}
+                              className="btn-secondary"
+                              style={{ padding: '4px 10px', fontSize: '11px', color: '#8b5cf6', borderColor: 'rgba(139,92,246,0.3)' }}
+                            >
+                              🎬 Wan2.x AI Video
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
