@@ -152,15 +152,17 @@ export default function ReelAssetsView({ reelId, onBack }) {
           <div style={{ display: 'flex', gap: '12px' }}>
             <button 
               className="btn-secondary" 
-              style={{ padding: '10px 20px', fontWeight: 'bold' }}
+              style={{ padding: '10px 20px', fontWeight: 'bold', color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' }}
               onClick={async () => {
-                if(window.confirm("Are you sure you want to completely re-chunk this script into new scenes? This will delete all current scene assets.")) {
-                  await supabase.from('reels').update({ status: 'generating_prompts' }).eq('id', reelId);
+                if(window.confirm("Completely re-chunk this script into new scenes? This will delete all current scenes and assets.")) {
+                  await supabase.from('reel_scenes').delete().eq('reel_id', reelId);
+                  await supabase.from('reels').update({ status: 'generating_prompts', master_audio_url: null, final_video_url: null }).eq('id', reelId);
                   setReel({...reel, status: 'generating_prompts'});
+                  fetchData();
                 }
               }}
             >
-              Re-Chunk Script
+              🗑️ Re-Chunk & Delete Old Scenes
             </button>
             <button 
               className="btn-primary" 
@@ -658,6 +660,19 @@ export default function ReelAssetsView({ reelId, onBack }) {
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
                           <button
                             onClick={async () => {
+                              if (window.confirm(`Delete Scene #${scene.scene_number} permanently?`)) {
+                                await supabase.from('reel_scenes').delete().eq('id', scene.id);
+                                await supabase.from('reels').update({ master_audio_url: null }).eq('id', reelId);
+                                fetchData();
+                              }
+                            }}
+                            className="btn-secondary"
+                            style={{ padding: '4px 10px', fontSize: '11px', color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.1)' }}
+                          >
+                            🗑️ Delete Scene
+                          </button>
+                          <button
+                            onClick={async () => {
                               if (window.confirm(`Reset and regenerate scene #${scene.scene_number}?`)) {
                                 await supabase.from('reel_scenes').update({ audio_url: null, video_url: null, image_url: null, media_options: null, status: 'generating_video' }).eq('id', scene.id);
                                 await supabase.from('reels').update({ master_audio_url: null }).eq('id', reelId);
@@ -665,7 +680,7 @@ export default function ReelAssetsView({ reelId, onBack }) {
                               }
                             }}
                             className="btn-secondary"
-                            style={{ padding: '4px 10px', fontSize: '11px', color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)' }}
+                            style={{ padding: '4px 10px', fontSize: '11px', color: '#f59e0b', borderColor: 'rgba(245,158,11,0.3)' }}
                           >
                             💥 Reset & Regenerate Scene
                           </button>
