@@ -204,8 +204,11 @@ async def generate_voice(node):
     scene_id = node.get("scene_id")
     if scene_id:
         local_path = f"local_cache/assets/audio/chunk_{scene_id}.mp3"
-        # Only use local cache if the file actually has audio data (> 100 bytes)
-        if os.path.exists(local_path) and os.path.getsize(local_path) > 100:
+        if node.get("force_regenerate"):
+            if os.path.exists(local_path):
+                try: os.remove(local_path)
+                except: pass
+        elif os.path.exists(local_path) and os.path.getsize(local_path) > 100:
             with open(local_path, "rb") as f:
                 header = f.read(10)
                 if not header.startswith(b'{'):
@@ -619,12 +622,19 @@ async def apply_bgm(reel_id):
 async def regenerate_reel_scene_chunk(scene):
     print(f"\n[+] Regenerating audio for reel scene: {scene['id']}")
     
+    import os
+    local_path = f"local_cache/assets/audio/chunk_{scene['id']}.mp3"
+    if os.path.exists(local_path):
+        try: os.remove(local_path)
+        except: pass
+
     node = {
         'type': 'voice',
         'character_name': scene.get('character_name', 'Narrator'),
         'dialogue': scene.get('dialogue', ''),
         'voice': scene.get('voice', 'kokoro_af_bella'),
-        'scene_id': scene['id']
+        'scene_id': scene['id'],
+        'force_regenerate': True
     }
     
     node = await generate_voice(node)
