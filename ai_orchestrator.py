@@ -955,7 +955,6 @@ async def generate_scene_video(scene):
     print(f"\n[+] Generating Video for Scene {scene['scene_number']} (ID: {scene_id})")
     
     # Text-to-Video generation using RunPod Serverless API
-    import os
     import asyncio
     import requests
     import base64
@@ -1782,7 +1781,6 @@ async def main_loop():
                         
                         import base64
                         import requests
-                        import os
                         
                         def generate_image_sync():
                             response = requests.post(
@@ -1847,6 +1845,8 @@ async def main_loop():
             reel_vid_req_res = supabase.table("reel_scenes").select("*").eq("status", "video_requested_local").execute()
             if reel_vid_req_res.data:
                 for scene in reel_vid_req_res.data:
+                    # Lock status immediately to prevent duplicate task spawning every 2s
+                    supabase.table("reel_scenes").update({"status": "processing_video"}).eq("id", scene["id"]).execute()
                     dispatch_task("process_reel_scene_video_job", scene["id"], process_reel_scene_video_job(scene))
 
             # Poll for BGM Search (Reels)
