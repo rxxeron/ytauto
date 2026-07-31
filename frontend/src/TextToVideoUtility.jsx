@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Mic, Play, Download, Loader2, Video, Image as ImageIcon, Archive, FileText, Sparkles, CheckCircle, Clock, Trash2, RefreshCw } from 'lucide-react';
+import { Mic, Play, Download, Loader2, Video, Image as ImageIcon, Archive, FileText, Sparkles, CheckCircle, Clock, Trash2, RefreshCw, XCircle } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
 export default function TextToVideoUtility() {
   const [ttsJobs, setTtsJobs] = useState([]);
   const [sleepStories, setSleepStories] = useState([]);
-  const [selectedItem, setSelectedItem] = useState(null); // { type: 'tts' | 'sleep', data: any }
+  const [standardReels, setStandardReels] = useState([]);
+  const [selectedItem, setSelectedItem] = useState(null); // { type: 'tts' | 'sleep' | 'reel', data: any }
   const [sleepScenes, setSleepScenes] = useState([]); // Array of Portions: [ [s1, s2, s3, s4], [s5, s6, s7, s8], ... ]
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [portionSize, setPortionSize] = useState(4); // 4 = Portion-Based, 1 = Scene-Based
@@ -34,7 +35,7 @@ export default function TextToVideoUtility() {
 
   const selectedId = selectedItem?.data?.id;
   useEffect(() => {
-    if (selectedItem?.type === 'sleep' && selectedId) {
+    if ((selectedItem?.type === 'sleep' || selectedItem?.type === 'reel') && selectedId) {
       fetchSleepScenes(selectedId, portionSize);
       const interval = setInterval(() => fetchSleepScenes(selectedId, portionSize), 3000);
       
@@ -53,15 +54,16 @@ export default function TextToVideoUtility() {
   const fetchLists = async () => {
     const [ttsRes, reelsRes] = await Promise.all([
       supabase.from('tts_jobs').select('*').order('created_at', { ascending: false }).limit(20),
-      supabase.from('reels').select('*').eq('reel_type', 'sleep').order('created_at', { ascending: false }).limit(20)
+      supabase.from('reels').select('*').order('created_at', { ascending: false }).limit(40)
     ]);
     if (ttsRes.data) setTtsJobs(ttsRes.data);
     if (reelsRes.data) {
-      setSleepStories(reelsRes.data);
+      setSleepStories(reelsRes.data.filter(r => r.reel_type === 'sleep'));
+      setStandardReels(reelsRes.data.filter(r => r.reel_type !== 'sleep'));
       // Keep selectedItem fresh if currently inspecting a reel
-      if (selectedItem?.type === 'sleep') {
+      if (selectedItem?.type === 'sleep' || selectedItem?.type === 'reel') {
         const fresh = reelsRes.data.find(r => r.id === selectedItem.data.id);
-        if (fresh) setSelectedItem({ type: 'sleep', data: fresh });
+        if (fresh) setSelectedItem({ type: fresh.reel_type === 'sleep' ? 'sleep' : 'reel', data: fresh });
       }
     }
   };
@@ -107,6 +109,25 @@ export default function TextToVideoUtility() {
       updateData.image_url = null; // Clear cached image to force Direct Text-to-Video
     }
     await supabase.from('reel_scenes').update(updateData).eq('id', leader.id);
+  };
+
+  const handleCancelPortionGeneration = async (portion) => {
+    for (const sc of portion) {
+      await supabase.from('reel_scenes').update({ status: 'pending' }).eq('id', sc.id);
+    }
+    if (selectedId) fetchSleepScenes(selectedId, portionSize);
+  };
+
+  const handleCancelAllActiveJobs = async () => {
+    if (!selectedId) return;
+    const { data: scenes } = await supabase.from('reel_scenes').select('id').eq('reel_id', selectedId);
+    if (scenes) {
+      const ids = scenes.map(s => s.id);
+      await supabase.from('reel_scenes').update({ status: 'pending' }).in('id', ids);
+    }
+    await supabase.from('reels').update({ status: 'pending' }).eq('id', selectedId);
+    fetchSleepScenes(selectedId, portionSize);
+    fetchLists();
   };
 
   const handleDeletePortionImage = async (portion) => {
@@ -269,7 +290,7 @@ export default function TextToVideoUtility() {
       }
 
       const content = await zip.generateAsync({ type: "blob" });
-      saveAs(content, `Pipeline_SleepStory_${selectedItem.data.id.substring(0,8)}.zip`);
+      saveAs(content, `Pipeline_${selectedItem.type === 'sleep' ? 'SleepStory' : 'Reel'}_${selectedItem.data.id.substring(0,8)}.zip`);
     } catch (err) {
       console.error("ZIP Generation error:", err);
       alert(`Download failed: ${err.message || 'CORS restriction'}`);
@@ -287,6 +308,7 @@ export default function TextToVideoUtility() {
   const imagesDoneCount = sleepScenes.filter(p => p[0]?.image_url).length;
   const videosDoneCount = sleepScenes.filter(p => p[0]?.video_url).length;
   const audiosDoneCount = sleepScenes.filter(p => p.some(s => s.audio_url)).length;
+  const hasActiveJobs = sleepScenes.some(p => p[0]?.status?.includes('requested') || p[0]?.status?.includes('generating'));
 
   const totalPortionPages = Math.ceil(sleepScenes.length / 5);
   const visiblePortions = sleepScenes.slice(portionPage * 5, (portionPage + 1) * 5);
@@ -302,9 +324,34 @@ export default function TextToVideoUtility() {
         </div>
         
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          {/* Standard Reels & Shorts */}
+          <div>
+            <h3 style={{ fontSize: '13px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>🎬 Standard Reels & Shorts</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {standardReels.map(reel => (
+                <button 
+                  key={reel.id}
+                  onClick={() => setSelectedItem({ type: 'reel', data: reel })}
+                  style={{ 
+                    textAlign: 'left', padding: '12px', borderRadius: '8px', 
+                    background: selectedItem?.data?.id === reel.id ? 'rgba(16, 185, 129, 0.2)' : 'rgba(0,0,0,0.2)',
+                    border: `1px solid ${selectedItem?.data?.id === reel.id ? '#10b981' : 'transparent'}`,
+                    color: 'white', cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ fontSize: '13px', fontWeight: '500', marginBottom: '4px' }}>{reel.title || 'Untitled Reel'}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{reel.reel_type || 'Reel'}</span>
+                    <span>{new Date(reel.created_at).toLocaleDateString()}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Sleep Stories */}
           <div>
-            <h3 style={{ fontSize: '13px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>Sleep Stories</h3>
+            <h3 style={{ fontSize: '13px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>🌙 Sleep Stories</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {sleepStories.map(reel => (
                 <button 
@@ -326,7 +373,7 @@ export default function TextToVideoUtility() {
 
           {/* TTS Jobs */}
           <div>
-            <h3 style={{ fontSize: '13px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>TTS Jobs</h3>
+            <h3 style={{ fontSize: '13px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>🎙️ TTS Jobs</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {ttsJobs.map(job => (
                 <button 
@@ -354,7 +401,7 @@ export default function TextToVideoUtility() {
       <div style={{ flex: 1, overflowY: 'auto', paddingRight: '12px' }}>
         {!selectedItem ? (
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', borderRadius: '16px', border: '1px dashed var(--border-light)' }}>
-            Select a Sleep Story or TTS Job from the left to start generating visuals.
+            Select a Reel, Sleep Story, or TTS Job from the left sidebar to start generating visuals.
           </div>
         ) : selectedItem.type === 'tts' && activeTtsData ? (
           <div className="glass-panel" style={{ padding: '32px' }}>
@@ -384,8 +431,13 @@ export default function TextToVideoUtility() {
                   </button>
                 </div>
               ) : activeTtsData.status === 'image_requested_local' ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#f59e0b', padding: '12px', background: 'rgba(245, 158, 11, 0.1)', borderRadius: '8px' }}>
-                  <Loader2 className="spin" size={16} /> Rendering Image...
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#f59e0b', padding: '12px', background: 'rgba(245, 158, 11, 0.1)', borderRadius: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Loader2 className="spin" size={16} /> Rendering Image...
+                  </div>
+                  <button onClick={() => supabase.from('tts_jobs').update({ status: 'pending' }).eq('id', activeTtsData.id)} className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px', color: '#ef4444' }}>
+                    🛑 Cancel
+                  </button>
                 </div>
               ) : activeTtsData.image_url && (
                 <div>
@@ -443,7 +495,7 @@ export default function TextToVideoUtility() {
             {/* Header Title & Batch Controls */}
             <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
               <div>
-                <h2 style={{ fontSize: '24px', margin: '0 0 4px 0' }}>{selectedItem.data.title}</h2>
+                <h2 style={{ fontSize: '24px', margin: '0 0 4px 0' }}>{selectedItem.data.title || 'Untitled Project'}</h2>
                 <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Divided into {sleepScenes.length} Visual {unitLabel}s ({portionSize === 4 ? 'Portion-Based' : 'Scene-Based'})</p>
               </div>
               
@@ -478,6 +530,13 @@ export default function TextToVideoUtility() {
                 <button onClick={handleCompileFullMovie} className="btn-primary" style={{ background: '#6366f1', borderColor: '#6366f1' }}>
                   <Video size={16} style={{ display: 'inline', marginRight: '6px' }}/> Compile Full Movie
                 </button>
+
+                {/* Cancel All Active Jobs Button */}
+                {hasActiveJobs && (
+                  <button onClick={handleCancelAllActiveJobs} className="btn-primary" style={{ background: '#ef4444', borderColor: '#ef4444' }}>
+                    <XCircle size={16} style={{ display: 'inline', marginRight: '6px' }}/> 🛑 Stop All Active Jobs
+                  </button>
+                )}
 
                 {/* Reset Assets Delete Menu */}
                 <select 
@@ -552,7 +611,10 @@ export default function TextToVideoUtility() {
               <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px', textAlign: 'center', background: 'rgba(99, 102, 241, 0.1)', border: '1px solid #6366f1' }}>
                 <Loader2 className="spin" size={32} style={{ margin: '0 auto 12px auto', color: '#6366f1' }} />
                 <h3 style={{ margin: '0 0 8px 0', color: '#6366f1' }}>Stitching Full Movie via FFmpeg...</h3>
-                <p style={{ margin: 0, color: 'var(--text-muted)' }}>Retiming visual units ({unitLabel}s) & looping visuals to cover 100% of master audio duration. (~1 min)</p>
+                <p style={{ margin: '0 0 16px 0', color: 'var(--text-muted)' }}>Retiming visual units ({unitLabel}s) & looping visuals to cover 100% of master audio duration. (~1 min)</p>
+                <button onClick={() => supabase.from('reels').update({ status: 'pending' }).eq('id', selectedId).then(() => fetchLists())} className="btn-secondary" style={{ color: '#ef4444', borderColor: '#ef4444' }}>
+                  🛑 Cancel Movie Compilation
+                </button>
               </div>
             )}
 
@@ -617,9 +679,14 @@ export default function TextToVideoUtility() {
                                 </button>
                               </div>
                             </div>
-                          ) : leader.status === 'image_requested_local' ? (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#f59e0b', padding: '40px', background: 'rgba(245, 158, 11, 0.1)', borderRadius: '12px', border: '1px dashed #f59e0b' }}>
-                              <Loader2 className="spin" size={24} /> Rendering FLUX Image...
+                          ) : (leader.status === 'image_requested_local' || leader.status === 'processing_image') ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#f59e0b', padding: '40px', background: 'rgba(245, 158, 11, 0.1)', borderRadius: '12px', border: '1px dashed #f59e0b' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Loader2 className="spin" size={20} /> Rendering FLUX Image...
+                              </div>
+                              <button onClick={() => handleCancelPortionGeneration(portion)} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' }}>
+                                🛑 Stop / Cancel
+                              </button>
                             </div>
                           ) : (
                             <button onClick={() => handlePortionImageRequest(portion)} className="btn-primary" style={{ background: '#f59e0b', borderColor: '#f59e0b', width: '100%', padding: '30px', fontSize: '15px' }}>
@@ -670,9 +737,14 @@ export default function TextToVideoUtility() {
                                 </button>
                               </div>
                             </div>
-                          ) : leader.status === 'video_requested_local' ? (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#10b981', padding: '40px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '12px', border: '1px dashed #10b981' }}>
-                              <Loader2 className="spin" size={24} /> Animating via Wan2.x...
+                          ) : (leader.status === 'video_requested_local' || leader.status === 'processing_video') ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#10b981', padding: '40px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '12px', border: '1px dashed #10b981' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Loader2 className="spin" size={20} /> Animating via Wan2.x...
+                              </div>
+                              <button onClick={() => handleCancelPortionGeneration(portion)} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' }}>
+                                🛑 Stop / Cancel
+                              </button>
                             </div>
                           ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -745,13 +817,18 @@ export default function TextToVideoUtility() {
                           )}
                         </div>
 
-                        {!leader.image_url && leader.status !== 'image_requested_local' ? (
+                        {!leader.image_url && leader.status !== 'image_requested_local' && leader.status !== 'processing_image' ? (
                           <button onClick={() => handlePortionImageRequest(portion)} className="btn-primary" style={{ background: '#f59e0b', borderColor: '#f59e0b', width: '100%' }}>
                             Generate Image for {unitLabel} {portionIndex + 1}
                           </button>
-                        ) : leader.status === 'image_requested_local' ? (
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#f59e0b', padding: '12px', background: 'rgba(245, 158, 11, 0.1)', borderRadius: '8px' }}>
-                            <Loader2 className="spin" size={16} /> Rendering FLUX Image...
+                        ) : (leader.status === 'image_requested_local' || leader.status === 'processing_image') ? (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#f59e0b', padding: '12px', background: 'rgba(245, 158, 11, 0.1)', borderRadius: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <Loader2 className="spin" size={16} /> Rendering FLUX Image...
+                            </div>
+                            <button onClick={() => handleCancelPortionGeneration(portion)} className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)' }}>
+                              🛑 Stop / Cancel
+                            </button>
                           </div>
                         ) : (
                           <div>
@@ -776,7 +853,7 @@ export default function TextToVideoUtility() {
                           )}
                         </div>
 
-                        {!leader.video_url && leader.status !== 'video_requested_local' ? (
+                        {!leader.video_url && leader.status !== 'video_requested_local' && leader.status !== 'processing_video' ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             <button onClick={() => handlePortionVideoRequest(portion, false)} className="btn-primary" style={{ background: '#10b981', borderColor: '#10b981', width: '100%' }}>
                               Animate {unitLabel} {portionIndex + 1} {leader.image_url ? '(From Image)' : ''}
@@ -787,9 +864,14 @@ export default function TextToVideoUtility() {
                               </button>
                             )}
                           </div>
-                        ) : leader.status === 'video_requested_local' ? (
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#10b981', padding: '12px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px' }}>
-                            <Loader2 className="spin" size={16} /> Animating via Wan2.x...
+                        ) : (leader.status === 'video_requested_local' || leader.status === 'processing_video') ? (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#10b981', padding: '12px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <Loader2 className="spin" size={16} /> Animating via Wan2.x...
+                            </div>
+                            <button onClick={() => handleCancelPortionGeneration(portion)} className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)' }}>
+                              🛑 Stop / Cancel
+                            </button>
                           </div>
                         ) : (
                           <div>

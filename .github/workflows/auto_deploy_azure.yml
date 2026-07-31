@@ -1,0 +1,50 @@
+name: Auto Deploy to Azure Linux VM
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Auto Pull & Restart Orchestrator on Azure VM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH and Auto Deploy on Azure VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AZURE_VM_HOST }}
+          username: ${{ secrets.AZURE_VM_USERNAME }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          password: ${{ secrets.AZURE_VM_PASSWORD }}
+          port: 22
+          script: |
+            echo "[+] Navigating to ytauto repository..."
+            if [ -d "$HOME/ytauto" ]; then
+              cd "$HOME/ytauto"
+            elif [ -d "/var/www/ytauto" ]; then
+              cd "/var/www/ytauto"
+            else
+              echo "Repository folder not found!"
+              exit 1
+            fi
+
+            echo "[+] Executing git pull origin main..."
+            git pull origin main
+
+            echo "[+] Activating Python virtual environment & updating requirements..."
+            if [ -f "venv/bin/activate" ]; then
+              source venv/bin/activate
+            elif [ -f "../venv/bin/activate" ]; then
+              source ../venv/bin/activate
+            fi
+
+            pip install -r requirements.txt
+
+            echo "[+] Restarting ai_orchestrator.py daemon..."
+            pkill -f "ai_orchestrator.py" || true
+            sleep 1
+            nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 &
+
+            echo "[+] Auto Deploy completed successfully!"
