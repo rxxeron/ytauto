@@ -131,31 +131,38 @@ async def process_reel_scene_asset(scene):
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     
     scene_id = scene['id']
-    query = scene.get('search_query', '')
+    query = scene.get('search_query') or scene.get('visual_prompt_context') or scene.get('dialogue', '')
+    
+    # Strip AR tags if present
+    import re
+    query = re.sub(r'\[AR:\s*(16:9|9:16)\]', '', query).strip()
+    # Take first 6 words for search query if text is long script
+    words = query.split()
+    if len(words) > 6:
+        query = " ".join(words[:6])
     
     if not query:
         supabase.table("reel_scenes").update({"status": "video_ready"}).eq("id", scene_id).execute()
         return
 
-    print(f"\n[+] Processing Asset for Reel Scene {scene['scene_number']} (ID: {scene_id})")
+    print(f"\n[+] Processing Asset for Reel Scene {scene['scene_number']} (ID: {scene_id}) - Query: '{query}'")
     
-    # Try all three video APIs and combine them
+    # Try video APIs to accumulate 4-5 options
     asset_options = []
     
-    pexels_vids = await fetch_pexels_video(query)
-    if pexels_vids:
-        asset_options.extend(pexels_vids[:2])
-        
     pixabay_vids = await fetch_pixabay_video(query)
     if pixabay_vids:
-        asset_options.extend(pixabay_vids[:2])
+        asset_options.extend(pixabay_vids[:3])
+        
+    pexels_vids = await fetch_pexels_video(query)
+    if pexels_vids:
+        asset_options.extend(pexels_vids[:3])
         
     coverr_vids = await fetch_coverr_video(query)
     if coverr_vids:
         asset_options.extend(coverr_vids[:2])
         
     is_video = True
-    
     asset_url = asset_options[0] if asset_options else None
     
     if not asset_url:
@@ -163,38 +170,29 @@ async def process_reel_scene_asset(scene):
         asset_url = await fetch_wikimedia_image(query)
         if asset_url: asset_options = [asset_url]
     
-    # Save media_options to the database
-    if asset_options:
-        try:
-            supabase.table("reel_scenes").update({"media_options": asset_options}).eq("id", scene_id).execute()
-        except Exception as e:
-            print(f"  -> DB Error saving media_options: {e}")
-
+    # Update Supabase database with media_options array and selected video/image URL
+    update_data = {
+        "status": "video_ready",
+        "search_query": query,
+        "media_options": asset_options
+    }
+    
     if asset_url:
         print(f"  -> Found asset ({'Video' if is_video else 'Image'}): {asset_url}")
-        
-        # Download the asset locally
-        try:
-            headers = {"User-Agent": "YTAutoStudio/1.0 (admin@ytauto.local) Python/3"}
-            r = requests.get(asset_url, headers=headers)
-            if r.status_code == 200:
-                os.makedirs("frontend/public/assets/images", exist_ok=True)
-                ext = asset_url.split('.')[-1].split('?')[0]
-                if ext not in ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'webm']: 
-                    ext = 'mp4' if is_video else 'jpg'
-                
-                local_path = f"frontend/public/assets/images/reel_scene_{scene_id}.{ext}"
-                with open(local_path, "wb") as f:
-                    f.write(r.content)
-                
-                public_url = f"/assets/images/reel_scene_{scene_id}.{ext}"
-                supabase.table("reel_scenes").update({"status": "video_ready", "image_url": public_url}).eq("id", scene_id).execute()
-                print(f"[+] Asset downloaded and saved for Reel Scene {scene['scene_number']}")
-                return
-        except Exception as e:
-            print(f"  -> Error downloading asset: {e}")
+        print(f"  -> Total Media Options Saved: {len(asset_options)}")
+        if is_video:
+            update_data["video_url"] = asset_url
+        else:
+            update_data["image_url"] = asset_url
             
-    print(f"[-] Failed to fetch or download asset for Scene {scene['scene_number']}. Using fallback.")
+        try:
+            supabase.table("reel_scenes").update(update_data).eq("id", scene_id).execute()
+            print(f"[+] Asset updated in Supabase for Reel Scene {scene['scene_number']}")
+            return
+        except Exception as e:
+            print(f"  -> Error updating Supabase asset row: {e}")
+            
+    print(f"[-] Failed to fetch asset for Scene {scene['scene_number']}. Using fallback.")
     fallback_url = "https://images.unsplash.com/photo-1461360370896-922624d12aa1?auto=format&fit=crop&q=80&w=1000"
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    supabase.table("reel_scenes").update({"status": "video_ready", "image_url": fallback_url}).eq("id", scene_id).execute()
+    update_data["image_url"] = fallback_url
+    supabase.table("reel_scenes").update(update_data).eq("id", scene_id).execute()

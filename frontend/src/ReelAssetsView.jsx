@@ -672,6 +672,39 @@ export default function ReelAssetsView({ reelId, onBack }) {
                           </div>
                         </div>
                       </div>
+
+                      {/* 4-5 Pixabay / Pexels / Coverr Media Options Picker */}
+                      {Array.isArray(scene.media_options) && scene.media_options.length > 0 && (
+                        <div style={{ marginTop: '12px', background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px', fontWeight: 'bold' }}>
+                            🎬 Select Stock Video Option ({scene.media_options.length} clips found from Pixabay/Pexels):
+                          </div>
+                          <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '4px' }}>
+                            {scene.media_options.map((optUrl, optIdx) => (
+                              <div 
+                                key={optIdx}
+                                onClick={async () => {
+                                  await supabase.from('reel_scenes').update({ video_url: optUrl, status: 'video_ready' }).eq('id', scene.id);
+                                  fetchData();
+                                }}
+                                style={{ 
+                                  flex: '0 0 120px', 
+                                  cursor: 'pointer', 
+                                  borderRadius: '6px', 
+                                  overflow: 'hidden',
+                                  border: scene.video_url === optUrl ? '2px solid #10b981' : '1px solid rgba(255,255,255,0.2)',
+                                  position: 'relative'
+                                }}
+                              >
+                                <video src={optUrl} style={{ width: '120px', height: '70px', objectFit: 'cover' }} />
+                                <div style={{ position: 'absolute', bottom: '4px', right: '4px', background: 'rgba(0,0,0,0.7)', fontSize: '9px', padding: '2px 4px', borderRadius: '3px', color: scene.video_url === optUrl ? '#10b981' : 'white' }}>
+                                  {scene.video_url === optUrl ? '✓ Active' : `Option ${optIdx + 1}`}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

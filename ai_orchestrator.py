@@ -1524,11 +1524,12 @@ async def main_loop():
                 for sc in prompt_regen_res.data:
                     dispatch_task("regenerate_scene_prompt", sc["id"], regenerate_scene_prompt(sc))
             
-            # Poll for reel scene asset generation (Wikimedia Commons)
+            # Poll for reel scene asset generation (Pixabay / Pexels / Coverr / Wikimedia)
             reel_vid_res = supabase.table("reel_scenes").select("*").eq("status", "generating_video").execute()
             if reel_vid_res.data:
                 import asset_collector
                 for sc in reel_vid_res.data:
+                    supabase.table("reel_scenes").update({"status": "processing_asset"}).eq("id", sc["id"]).execute()
                     dispatch_task("process_reel_scene_asset", sc["id"], asset_collector.process_reel_scene_asset(sc))
                     
             # Poll for reel scene audio chunk regeneration
