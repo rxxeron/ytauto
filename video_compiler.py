@@ -385,6 +385,11 @@ async def compile_final_video(reel_id):
     cmd.extend([
         "-vf", f"ass={ass_path}",
         "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "26",
+        "-b:v", "2500k",
+        "-maxrate", "3000k",
+        "-bufsize", "6000k",
         "-c:a", "aac",
         "-b:a", "192k",
         out_path
