@@ -19,6 +19,7 @@ jobs:
           key: ${{ secrets.AZURE_VM_SSH_KEY }}
           password: ${{ secrets.AZURE_VM_PASSWORD }}
           port: 22
+          script_stop: false
           script: |
             echo "[+] Navigating to ytauto repository..."
             if [ -d "$HOME/ytauto" ]; then
@@ -43,8 +44,8 @@ jobs:
             pip install -r requirements.txt
 
             echo "[+] Restarting ai_orchestrator.py daemon..."
-            pkill -f "ai_orchestrator.py" || true
+            pkill -9 -f "ai_orchestrator.py" || true
             sleep 1
-            nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 &
+            nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 < /dev/null &
 
             echo "[+] Auto Deploy completed successfully!"
