@@ -181,6 +181,50 @@ export default function ReelAssetsView({ reelId, onBack }) {
           </div>
         )}
 
+        {/* Sync Script & Purge Button */}
+        <button 
+          className="btn-secondary" 
+          style={{ padding: '10px 16px', fontWeight: 'bold', color: '#f59e0b', borderColor: 'rgba(245,158,11,0.4)', display: 'flex', alignItems: 'center', gap: '8px' }}
+          onClick={async () => {
+            const fullScript = (reel.final_script_content || "").toLowerCase().replace(/\s+/g, ' ');
+            if (!fullScript) {
+              alert("Master script is empty!");
+              return;
+            }
+
+            const removedSceneIds = [];
+            const keptScenes = [];
+
+            for (const sc of scenes) {
+              const dialogueSnippet = (sc.dialogue || "").trim().toLowerCase().replace(/\s+/g, ' ');
+              const keyPhrase = dialogueSnippet.substring(0, Math.min(15, dialogueSnippet.length));
+              
+              if (keyPhrase.length > 3 && !fullScript.includes(keyPhrase)) {
+                removedSceneIds.push(sc.id);
+              } else {
+                keptScenes.push(sc);
+              }
+            }
+
+            if (removedSceneIds.length === 0) {
+              alert("All existing scenes match the current master script! No removed scenes found.");
+              return;
+            }
+
+            if (window.confirm(`Found ${removedSceneIds.length} scene(s) that were removed from the master script. Purge them now?`)) {
+              await supabase.from('reel_scenes').delete().in('id', removedSceneIds);
+              for (let idx = 0; idx < keptScenes.length; idx++) {
+                await supabase.from('reel_scenes').update({ scene_number: idx + 1 }).eq('id', keptScenes[idx].id);
+              }
+              await supabase.from('reels').update({ master_audio_url: null }).eq('id', reelId);
+              alert(`Purged ${removedSceneIds.length} removed scene(s) successfully!`);
+              fetchData();
+            }
+          }}
+        >
+          ⚡ Sync Script & Purge Removed Scenes
+        </button>
+
         {/* Regenerate All Audios & Compile Buttons */}
         <button 
           className="btn-primary" 
