@@ -235,14 +235,32 @@ async def compile_final_video(reel_id):
                 if os.path.exists(alt_path):
                     asset_path = alt_path
                 else:
-                    print(f"  -> Asset file not found locally ({asset_url}), generating fallback card ({time_per_scene:.2f}s)...")
-                    cmd = [
-                        "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}", "-t", str(time_per_scene),
-                        "-vf", f"drawtext=text='Scene {i+1}':fontcolor=white:fontsize=48:x=(w-tw)/2:y=(h-th)/2",
-                        "-c:v", "libx264", "-r", "30", "-an", chunk_path
-                    ]
-                    await run_ffmpeg(cmd)
-                    continue
+                    # Attempt downloading from Supabase Storage bucket
+                    fname = asset_url.split("/")[-1]
+                    sp_url = f"{SUPABASE_URL}/storage/v1/object/public/images/images/{fname}"
+                    downloaded = False
+                    try:
+                        import requests
+                        r = requests.get(sp_url)
+                        if r.status_code == 200:
+                            dl_ext = fname.split('.')[-1].lower() if '.' in fname else 'png'
+                            dl_tmp = f"temp_dl_{i}.{dl_ext}"
+                            with open(dl_tmp, "wb") as f: f.write(r.content)
+                            asset_path = dl_tmp
+                            downloaded = True
+                            print(f"  -> Downloaded asset from Supabase Storage: {sp_url}")
+                    except Exception as ex:
+                        print(f"  -> Could not download from Supabase Storage: {ex}")
+
+                    if not downloaded:
+                        print(f"  -> Asset file not found locally or on Supabase ({asset_url}), generating fallback card ({time_per_scene:.2f}s)...")
+                        cmd = [
+                            "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}", "-t", str(time_per_scene),
+                            "-vf", f"drawtext=text='Scene {i+1}':fontcolor=white:fontsize=48:x=(w-tw)/2:y=(h-th)/2",
+                            "-c:v", "libx264", "-r", "30", "-an", chunk_path
+                        ]
+                        await run_ffmpeg(cmd)
+                        continue
         
         ext = asset_path.split('?')[0].split('.')[-1].lower()
         is_video = ext in ['mp4', 'webm', 'mov']
