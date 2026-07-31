@@ -205,11 +205,9 @@ export default function ReelsManager() {
                     {reel.status === 'draft' ? 'Open Director Chat' : 'View Script'}
                   </button>
                   
-                  {['approved', 'prompts_ready', 'generating_prompts', 'error_prompts', 'generating_audio', 'audio_ready', 'bgm_selection', 'applying_bgm', 'compiling_video', 'completed', 'error'].includes(reel.status) && (
-                    <button className="btn-primary" onClick={() => window.dispatchEvent(new CustomEvent('openReelAssets', { detail: reel }))} style={{ padding: '6px 12px', fontSize: '12px' }}>
-                      View Assets & Final Video
-                    </button>
-                  )}
+                  <button className="btn-primary" onClick={() => window.dispatchEvent(new CustomEvent('openReelAssets', { detail: reel }))} style={{ padding: '6px 12px', fontSize: '12px' }}>
+                    View Assets & Studio
+                  </button>
                   
                   <button className="btn-secondary" onClick={() => handleDeleteReel(reel.id)} title="Delete Reel" style={{ padding: '6px 10px', borderColor: 'rgba(239, 68, 68, 0.5)', color: '#ef4444' }}>
                     <Trash2 size={14} />
