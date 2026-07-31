@@ -50,13 +50,34 @@ async def compile_final_video(reel_id):
     
     if not scenes: return
         
-    master_audio_rel = reel.get("master_audio_url")
-    if not master_audio_rel: 
-        print("[-] Master audio URL missing for reel!")
-        return
-        
     os.makedirs("local_cache/assets/audio", exist_ok=True)
     master_audio_path = f"local_cache/assets/audio/reel_{reel_id}_master.mp3"
+
+    master_audio_rel = reel.get("master_audio_url")
+    if not master_audio_rel: 
+        print("  -> Master audio URL missing on reel, concatenating scene audio tracks...")
+        import requests, uuid
+        combined = AudioSegment.empty()
+        has_audio = False
+        for sc in scenes:
+            a_url = sc.get("audio_url")
+            if a_url:
+                try:
+                    r = requests.get(a_url)
+                    if r.status_code == 200:
+                        tmp = f"temp_sc_a_{uuid.uuid4().hex[:6]}.mp3"
+                        with open(tmp, "wb") as f: f.write(r.content)
+                        combined += AudioSegment.from_file(tmp)
+                        if os.path.exists(tmp): os.remove(tmp)
+                        has_audio = True
+                except Exception as ex:
+                    print(f"  -> Warning downloading scene audio: {ex}")
+        if has_audio:
+            combined.export(master_audio_path, format="mp3")
+            master_audio_rel = master_audio_path
+        else:
+            print("[-] No scene audio files found!")
+            return
     
     # Download master audio if not present locally
     if not os.path.exists(master_audio_path) or os.path.getsize(master_audio_path) == 0:
@@ -304,11 +325,26 @@ async def compile_final_video(reel_id):
                 ]
             await run_ffmpeg(cmd)
 
-    # 2. Create FFmpeg concat file for chunks
+    # 2. Create FFmpeg concat file for chunks, looping until master audio duration is fully covered
+    master_audio_dur = 0.0
+    try:
+        master_audio_dur = len(AudioSegment.from_file(master_audio_path)) / 1000.0
+        print(f"  -> Master Audio Duration: {master_audio_dur:.2f}s")
+    except Exception as e:
+        print(f"  -> Warning: Could not measure master audio duration: {e}")
+
+    total_chunks_dur = sum(c["duration"] for c in visible_chunks) if visible_chunks else 0.0
+    
     concat_file_path = f"temp_concat_{reel_id}.txt"
     with open(concat_file_path, "w", encoding="utf-8") as f:
-        for chunk in chunk_files:
-            f.write(f"file '{chunk}'\n")
+        if chunk_files:
+            current_dur = 0.0
+            # Loop visual chunk list as many times as needed to cover full master audio duration
+            while current_dur < master_audio_dur or current_dur < total_chunks_dur:
+                for chunk in chunk_files:
+                    f.write(f"file '{chunk}'\n")
+                current_dur += total_chunks_dur
+                if total_chunks_dur == 0: break
             
     # 3. Run Final FFmpeg mix
     os.makedirs("local_cache/assets/videos", exist_ok=True)
@@ -322,14 +358,19 @@ async def compile_final_video(reel_id):
         "-f", "concat",
         "-safe", "0",
         "-i", concat_file_path,
-        "-i", master_audio_path,
+        "-i", master_audio_path
+    ]
+    
+    if master_audio_dur > 0:
+        cmd.extend(["-t", str(master_audio_dur)])
+        
+    cmd.extend([
         "-vf", f"ass={ass_path}",
         "-c:v", "libx264",
         "-c:a", "aac",
         "-b:a", "192k",
-        "-shortest",
         out_path
-    ]
+    ])
     
     print("  -> Concat and Mixing Audio...")
     try:
