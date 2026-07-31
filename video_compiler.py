@@ -403,6 +403,18 @@ async def compile_final_video(reel_id):
         print("  -> Uploading final video to Supabase Storage...")
         public_url = upload_to_media_bucket(out_path, f"videos/reel_{reel_id}_final.mp4", "video/mp4")
         
+        # Upload the final video to Google Drive Folder
+        print("  -> Uploading final video to Google Drive Folder...")
+        import gdrive_uploader
+        gdrive_res = gdrive_uploader.upload_file_to_gdrive(out_path, f"reel_{reel_id}_final.mp4")
+        gdrive_url = gdrive_res.get("drive_view_url") if gdrive_res else None
+
+        # Run 14-day auto-cleanup on Google Drive folder
+        try:
+            gdrive_uploader.auto_cleanup_old_gdrive_files(max_age_days=14)
+        except Exception as ex:
+            print(f"  -> Google Drive cleanup check: {ex}")
+
     except Exception as e:
         print(f"[-] Final FFmpeg error: {e}")
         supabase.table("reels").update({"status": "error"}).eq("id", reel_id).execute()
@@ -415,12 +427,18 @@ async def compile_final_video(reel_id):
             if os.path.exists(chunk): os.remove(chunk)
 
     print(f"[+] Final Mixed-Media Video compiled successfully: {public_url}")
+    if gdrive_url:
+        print(f"[+] Google Drive Link: {gdrive_url}")
     
     # 4. Update Database
-    supabase.table("reels").update({
+    update_payload = {
         "status": "completed",
         "final_video_url": public_url
-    }).eq("id", reel_id).execute()
+    }
+    if gdrive_url:
+        update_payload["gdrive_url"] = gdrive_url
+
+    supabase.table("reels").update(update_payload).eq("id", reel_id).execute()
 
 if __name__ == "__main__":
     import sys
