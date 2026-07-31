@@ -554,24 +554,37 @@ export default function ReelAssetsView({ reelId, onBack }) {
                   <h3 style={{ margin: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Volume2 color="#8b5cf6" size={20} /> Portion {portionIndex + 1}
                   </h3>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: '4px' }}>
-                      Covers {scenesCount} audio scenes
-                    </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '11px', color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)' }}
+                      onClick={async () => {
+                        if (window.confirm(`Reset and regenerate all audios and visuals for Portion ${portionIndex + 1}?`)) {
+                          const pIds = portion.map(s => s.id);
+                          await supabase.from('reel_scenes').update({ audio_url: null, video_url: null, image_url: null, media_options: null, status: 'generating_video' }).in('id', pIds);
+                          await supabase.from('reels').update({ master_audio_url: null }).eq('id', reelId);
+                          fetchData();
+                        }
+                      }}
+                    >
+                      💥 Regenerate Portion (Audio + Visuals)
+                    </button>
                     <button
                       className="btn-primary"
                       onClick={async () => {
                         for (const scene of portion) {
                           if (scene.dialogue && scene.dialogue.trim().length > 0) {
-                            await supabase.from('reel_scenes').update({ status: 'regenerating_audio' }).eq('id', scene.id);
+                            await supabase.from('reel_scenes').update({ audio_url: null, status: 'regenerating_audio' }).eq('id', scene.id);
                           }
                         }
+                        await supabase.from('reels').update({ master_audio_url: null }).eq('id', reelId);
                         fetchData();
                       }}
-                      style={{ padding: '6px 12px', fontSize: '12px', whiteSpace: 'nowrap', background: '#8b5cf6', borderColor: '#8b5cf6' }}
                       disabled={isPortionRegenerating}
+                      style={{ padding: '6px 12px', fontSize: '11px' }}
                     >
-                      {isPortionRegenerating ? 'Generating Audio...' : portion.some(s => s.audio_url) ? 'Regenerate Audio for Portion' : 'Generate Audio for Portion'}
+                      {isPortionRegenerating ? <Loader2 className="spin" size={12} /> : <Volume2 size={12} />}
+                      {isPortionRegenerating ? 'Regenerating...' : 'Regenerate Portion Audio'}
                     </button>
                   </div>
                 </div>
@@ -643,6 +656,19 @@ export default function ReelAssetsView({ reelId, onBack }) {
                           }}
                         />
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+                          <button
+                            onClick={async () => {
+                              if (window.confirm(`Reset and regenerate scene #${scene.scene_number}?`)) {
+                                await supabase.from('reel_scenes').update({ audio_url: null, video_url: null, image_url: null, media_options: null, status: 'generating_video' }).eq('id', scene.id);
+                                await supabase.from('reels').update({ master_audio_url: null }).eq('id', reelId);
+                                fetchData();
+                              }
+                            }}
+                            className="btn-secondary"
+                            style={{ padding: '4px 10px', fontSize: '11px', color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)' }}
+                          >
+                            💥 Reset & Regenerate Scene
+                          </button>
                           <button
                             onClick={async () => {
                               // Delete old scene audio and trigger fresh generation
