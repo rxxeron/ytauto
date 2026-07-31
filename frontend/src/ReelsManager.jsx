@@ -68,8 +68,10 @@ export default function ReelsManager() {
   };
 
   const handleDeleteReel = async (reelId) => {
-    if (!window.confirm("Are you sure you want to permanently delete this reel?")) return;
+    if (!window.confirm("Are you sure you want to permanently delete this reel and all its scenes?")) return;
     try {
+      // Delete child scenes first to satisfy foreign key constraints
+      await supabase.from('reel_scenes').delete().eq('reel_id', reelId);
       const { error } = await supabase.from('reels').delete().eq('id', reelId);
       if (error) throw error;
       setReelsList(reelsList.filter(r => r.id !== reelId));

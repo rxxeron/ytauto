@@ -89,11 +89,13 @@ export default function SeriesManager() {
 
   const handleDeleteEpisode = async (episodeId) => {
     if (!window.confirm("Are you sure you want to permanently delete this episode? This will delete all its chats and assets too!")) return;
-    const { error } = await supabase.from('episodes').delete().eq('id', episodeId);
-    if (error) {
-      alert("Error deleting: " + error.message);
-    } else {
+    try {
+      await supabase.from('episode_scenes').delete().eq('episode_id', episodeId);
+      const { error } = await supabase.from('episodes').delete().eq('id', episodeId);
+      if (error) throw error;
       setEpisodes(episodes.filter(ep => ep.id !== episodeId));
+    } catch (error) {
+      alert("Error deleting: " + error.message);
     }
   };
 
