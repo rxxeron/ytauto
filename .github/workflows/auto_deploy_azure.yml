@@ -43,8 +43,8 @@ jobs:
 
             pip install -r requirements.txt
 
-            echo "[+] Restarting ytauto daemon service..."
-            if systemctl is-active --quiet ytauto || systemctl is-enabled --quiet ytauto 2>/dev/null; then
+            echo "[+] Checking ytauto daemon service..."
+            if [ -f "/etc/systemd/system/ytauto.service" ]; then
               sudo systemctl restart ytauto
             else
               pkill -9 -f "ai_orchestrator.py" || true
@@ -53,9 +53,8 @@ jobs:
                 screen -X -S ytauto quit || true
                 screen -dmS ytauto python3 -u ai_orchestrator.py
               else
-                nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 </dev/null &
+                nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 < /dev/null &
               fi
             fi
 
             echo "[+] Auto Deploy completed successfully!"
-            exit 0
