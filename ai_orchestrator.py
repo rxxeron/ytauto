@@ -1795,7 +1795,25 @@ async def main_loop():
                                     }
                                 }
                             )
-                            return response.json()
+                            data = response.json()
+                            job_id = data.get("id")
+                            status = data.get("status")
+                            
+                            # If serverless endpoint queued the job instead of returning immediately in runsync
+                            if status in ["IN_QUEUE", "IN_PROGRESS"] and job_id:
+                                print(f"  -> RunPod image job queued ({job_id}). Polling status...")
+                                for _ in range(60): # poll for up to 2 mins
+                                    time.sleep(2)
+                                    status_resp = requests.get(
+                                        f"https://api.runpod.ai/v2/black-forest-labs-flux-1-schnell/status/{job_id}",
+                                        headers={"Authorization": f"Bearer {os.getenv('RUNPOD_IMAGE_API_KEY')}"}
+                                    )
+                                    s_data = status_resp.json()
+                                    if s_data.get("status") == "COMPLETED":
+                                        return s_data
+                                    elif s_data.get("status") == "FAILED":
+                                        raise Exception(f"RunPod image generation failed: {s_data}")
+                            return data
                             
                         response_data = await asyncio.to_thread(generate_image_sync)
                         
@@ -1806,8 +1824,10 @@ async def main_loop():
                         output = response_data.get("output", {})
                         if isinstance(output, str) and output.startswith("http"):
                             image_url = output
+                        elif isinstance(output, dict):
+                            image_url = output.get("result") or output.get("image_url") or output.get("images")
                         else:
-                            image_url = output.get("result") or output.get("image_url")
+                            image_url = None
                         
                         if isinstance(image_url, list) and len(image_url) > 0:
                             image_url = image_url[0]
@@ -1815,9 +1835,14 @@ async def main_loop():
                         if image_url and isinstance(image_url, str) and image_url.startswith("http"):
                             img_resp = requests.get(image_url)
                             image_bytes = img_resp.content
-                        elif isinstance(output, dict) and "image" in output:
-                            # It might be base64
-                            image_bytes = base64.b64decode(output["image"])
+                        elif isinstance(output, dict) and ("image" in output or "images" in output):
+                            img_data = output.get("image") or output.get("images")
+                            if isinstance(img_data, list) and len(img_data) > 0: img_data = img_data[0]
+                            if isinstance(img_data, str) and img_data.startswith("http"):
+                                img_resp = requests.get(img_data)
+                                image_bytes = img_resp.content
+                            else:
+                                image_bytes = base64.b64decode(img_data)
                         else:
                             raise Exception(f"Unexpected RunPod response: {response_data}")
                             
