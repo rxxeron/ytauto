@@ -128,7 +128,7 @@ async def generate_with_gemini_native(messages, system_prompt):
 async def generate_with_groq_native(messages, system_prompt):
     if not groq_keys.keys: raise Exception("No Groq keys")
     last_error = None
-    model_name = "llama-3.3-70b-specdec"
+    model_name = "llama-3.1-8b-instant"
     
     for _ in range(len(groq_keys.keys)):
         key = groq_keys.get_key()
@@ -1236,7 +1236,7 @@ async def process_reel_scene_image_job(scene):
             try:
                 client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
                 response = client.chat.completions.create(
-                    model="llama-3.3-70b-specdec",
+                    model="llama-3.1-8b-instant",
                     messages=[{"role": "user", "content": f"You are a cinematic prompt engineer. Based on the following voiceover script segment, write a single concise 1-2 sentence image generation prompt for a highly detailed, cinematic photograph that perfectly captures the mood. Script: {context_text}"}]
                 )
                 prompt_res = response.choices[0].message.content
@@ -1297,7 +1297,7 @@ async def process_reel_scene_video_job(scene):
                 try:
                     client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
                     response = client.chat.completions.create(
-                        model="llama-3.3-70b-specdec",
+                        model="llama-3.1-8b-instant",
                         messages=[
                             {"role": "system", "content": "You are a cinematic prompt engineer. Output ONLY the raw visual prompt for video generation. Do NOT include intro text."},
                             {"role": "user", "content": f"Script segment: {context_text}"}
@@ -1755,7 +1755,7 @@ async def main_loop():
                             try:
                                 client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
                                 response = client.chat.completions.create(
-                                    model="llama-3.3-70b-specdec",
+                                    model="llama-3.1-8b-instant",
                                     messages=[
                                         {"role": "system", "content": "You are a cinematic prompt engineer. Output ONLY the raw visual prompt for FLUX image generation. Do NOT include any intro text, conversational preambles, prefixes, or quotation marks."},
                                         {"role": "user", "content": f"Script segment: {context_text}"}
