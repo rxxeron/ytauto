@@ -43,15 +43,18 @@ jobs:
 
             pip install -r requirements.txt
 
-            echo "[+] Restarting ai_orchestrator.py daemon..."
-            pkill -9 -f "ai_orchestrator.py" || true
-            sleep 1
-            
-            if command -v screen >/dev/null 2>&1; then
-              screen -X -S ytauto quit || true
-              screen -dmS ytauto python3 -u ai_orchestrator.py
+            echo "[+] Restarting ytauto daemon service..."
+            if systemctl is-active --quiet ytauto || systemctl is-enabled --quiet ytauto 2>/dev/null; then
+              sudo systemctl restart ytauto
             else
-              nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 </dev/null &
+              pkill -9 -f "ai_orchestrator.py" || true
+              sleep 1
+              if command -v screen >/dev/null 2>&1; then
+                screen -X -S ytauto quit || true
+                screen -dmS ytauto python3 -u ai_orchestrator.py
+              else
+                nohup python3 -u ai_orchestrator.py > orchestrator.log 2>&1 </dev/null &
+              fi
             fi
 
             echo "[+] Auto Deploy completed successfully!"
