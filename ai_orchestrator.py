@@ -1227,27 +1227,27 @@ async def process_reel_scene_image_job(scene):
             height = 1344
             context_text = context_text.replace("[AR: 9:16]", "").strip()
             
-        from openai import OpenAI
-        prompt_res = None
-        last_err = None
+        context_text = scene.get('visual_prompt_context') or scene.get('dialogue') or "Cinematic dream scene"
+        image_prompt = None
         
-        for _ in range(max(1, len(groq_keys.keys))):
-            key = groq_keys.get_key()
+        # Try Gemini Key Rotator first, fallback to Together/Groq if needed
+        for _ in range(max(1, len(gemini_keys.keys))):
+            key = gemini_keys.get_key()
             try:
-                client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
-                response = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[{"role": "user", "content": f"You are a cinematic prompt engineer. Based on the following voiceover script segment, write a single concise 1-2 sentence image generation prompt for a highly detailed, cinematic photograph that perfectly captures the mood. Script: {context_text}"}]
+                genai.configure(api_key=key)
+                model = genai.GenerativeModel(
+                    model_name='gemini-3.5-flash',
+                    system_instruction="You are a cinematic prompt engineer. Output ONLY the raw visual prompt for FLUX image generation. Do NOT include any intro text, preambles, prefixes, or quotation marks."
                 )
-                prompt_res = response.choices[0].message.content
+                loop = asyncio.get_running_loop()
+                resp = await loop.run_in_executor(None, lambda: model.generate_content(f"Script segment: {context_text}"))
+                image_prompt = resp.text.strip()
                 break
             except Exception as e:
-                last_err = e
-        
-        if not prompt_res:
-            raise last_err
-            
-        image_prompt = prompt_res.strip()
+                print(f"[-] Gemini prompt gen fallback error: {e}")
+
+        if not image_prompt:
+            image_prompt = context_text
         print(f"  -> Generated Image Prompt: {image_prompt}")
         print(f"  -> Resolution: {width}x{height}")
         
@@ -1746,30 +1746,26 @@ async def main_loop():
                             context_text = re.sub(r'\[AR:\s*(16:9|9:16)\]', '', context_text).strip()
                         
                         
-                        from openai import OpenAI
-                        prompt_res = None
-                        last_err = None
+                        image_prompt = None
                         
-                        for _ in range(max(1, len(groq_keys.keys))):
-                            key = groq_keys.get_key()
+                        for _ in range(max(1, len(gemini_keys.keys))):
+                            key = gemini_keys.get_key()
                             try:
-                                client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
-                                response = client.chat.completions.create(
-                                    model="llama-3.1-8b-instant",
-                                    messages=[
-                                        {"role": "system", "content": "You are a cinematic prompt engineer. Output ONLY the raw visual prompt for FLUX image generation. Do NOT include any intro text, conversational preambles, prefixes, or quotation marks."},
-                                        {"role": "user", "content": f"Script segment: {context_text}"}
-                                    ]
+                                genai.configure(api_key=key)
+                                model = genai.GenerativeModel(
+                                    model_name='gemini-3.5-flash',
+                                    system_instruction="You are a cinematic prompt engineer. Output ONLY the raw visual prompt for FLUX image generation. Do NOT include any intro text, conversational preambles, prefixes, or quotation marks."
                                 )
-                                prompt_res = response.choices[0].message.content
+                                loop = asyncio.get_running_loop()
+                                resp = await loop.run_in_executor(None, lambda: model.generate_content(f"Script segment: {context_text}"))
+                                image_prompt = resp.text.strip()
                                 break
                             except Exception as e:
-                                last_err = e
-                        
-                        if not prompt_res:
-                            raise last_err
+                                print(f"[-] Gemini prompt gen error: {e}")
+
+                        if not image_prompt:
+                            image_prompt = context_text
                             
-                        image_prompt = prompt_res.strip()
                         # Clean conversational preambles if LLM still includes them
                         intro_patterns = [
                             r"^(Here is|Here's) [^\n:]+:\s*",
